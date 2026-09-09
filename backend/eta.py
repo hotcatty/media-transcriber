@@ -29,13 +29,17 @@ def format_remain(seconds: Optional[float]) -> str:
 
 
 def format_model_remain(seconds: Optional[float]) -> str:
-    """First-use model step: 可能还需要X分钟. Minutes only, so the line does not tick every second."""
+    """Figma 23:353: keep the first-use reason, only the duration tail is live."""
     if seconds is None:
-        return "可能还需要几分钟"
-    s = int(round(max(0.0, float(seconds))))
-    if s < 60:
-        return "可能还需要不到1分钟"
-    return f"可能还需要{max(1, int(round(s / 60)))}分钟"
+        tail = "可能还需要几分钟"
+    else:
+        s = int(round(max(0.0, float(seconds))))
+        tail = (
+            "可能还需要不到1分钟"
+            if s < 60
+            else f"可能还需要{max(1, int(round(s / 60)))}分钟"
+        )
+    return f"首次使用需要下载语音分析模型，{tail}"
 
 
 def stamp(remain: Optional[float], now: Optional[float] = None) -> dict:

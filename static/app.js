@@ -24,10 +24,12 @@ function formatRemain(seconds) {
 }
 
 function formatModelRemain(seconds) {
-  if (seconds == null || Number.isNaN(Number(seconds))) return "可能还需要几分钟";
-  const s = Math.max(0, Math.round(Number(seconds)));
-  if (s < 60) return "可能还需要不到1分钟";
-  return `可能还需要${Math.max(1, Math.round(s / 60))}分钟`;
+  let tail = "可能还需要几分钟";
+  if (seconds != null && !Number.isNaN(Number(seconds))) {
+    const s = Math.max(0, Math.round(Number(seconds)));
+    tail = s < 60 ? "可能还需要不到1分钟" : `可能还需要${Math.max(1, Math.round(s / 60))}分钟`;
+  }
+  return `首次使用需要下载语音分析模型，${tail}`;
 }
 
 function liveRemain(task) {
@@ -387,7 +389,7 @@ function renderJob(task) {
       } else if (s.state === "current" && s.id === "model") {
         const size = s.size || "";
         const remain = liveRemain(task);
-        const hint = s.hint || formatModelRemain(remain);
+        const hint = formatModelRemain(remain);
         extra = `<span class="step-extra">${size ? `<span class="step-hint">${escapeHtml(size)}</span>` : ""}<span class="step-hint step-hint--eta">${escapeHtml(hint)}</span></span>`;
       } else if (s.state === "current") {
         const remain = liveRemain(task);
