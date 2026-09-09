@@ -23,6 +23,13 @@ function formatRemain(seconds) {
   return `剩余约${Math.max(1, Math.round(s / 60))}分钟`;
 }
 
+function formatModelRemain(seconds) {
+  if (seconds == null || Number.isNaN(Number(seconds))) return "可能还需要几分钟";
+  const s = Math.max(0, Math.round(Number(seconds)));
+  if (s < 60) return "可能还需要不到1分钟";
+  return `可能还需要${Math.max(1, Math.round(s / 60))}分钟`;
+}
+
 function liveRemain(task) {
   const steps = (task && task.steps) || [];
   const cur = steps.find((s) => s.state === "current");
@@ -46,10 +53,17 @@ function liveRemain(task) {
 }
 
 function paintEta() {
-  const el = document.querySelector("#jobPanel .step.current .step-hint");
-  if (!el || !currentTask) return;
+  const step = document.querySelector("#jobPanel .step.current");
+  if (!step || !currentTask) return;
   const remain = liveRemain(currentTask);
   if (remain == null) return;
+  if (step.classList.contains("step--model")) {
+    const el = step.querySelector(".step-hint--eta");
+    if (el) el.textContent = formatModelRemain(remain);
+    return;
+  }
+  const el = step.querySelector(".step-hint");
+  if (!el) return;
   el.textContent = formatRemain(remain);
 }
 
@@ -372,8 +386,9 @@ function renderJob(task) {
         extra = `<button type="button" class="link" data-reveal-audio="1">${escapeHtml(s.action_label || "查看音频")}</button>`;
       } else if (s.state === "current" && s.id === "model") {
         const size = s.size || "";
-        const hint = s.hint || "首次使用需要下载语音分析模型，可能需要几分钟";
-        extra = `<span class="step-extra">${size ? `<span class="step-hint">${escapeHtml(size)}</span>` : ""}<span class="step-hint">${escapeHtml(hint)}</span></span>`;
+        const remain = liveRemain(task);
+        const hint = s.hint || formatModelRemain(remain);
+        extra = `<span class="step-extra">${size ? `<span class="step-hint">${escapeHtml(size)}</span>` : ""}<span class="step-hint step-hint--eta">${escapeHtml(hint)}</span></span>`;
       } else if (s.state === "current") {
         const remain = liveRemain(task);
         const countdown = remain != null ? formatRemain(remain) : (s.eta || s.hint || "即将完成");

@@ -56,9 +56,6 @@ from video_processor import VideoProcessor
 
 logger = logging.getLogger(__name__)
 
-FIRST_MODEL_HINT = "首次使用需要下载语音分析模型，可能需要几分钟"
-
-
 def _fmt_model_size(done: int, total: int) -> str:
     def one(n: int) -> str:
         n = max(int(n or 0), 0)
@@ -116,14 +113,11 @@ def pipeline_steps(task: Task) -> list:
             ("finalize", "整理文稿"),
         ]
     if show_model:
-        new_defs = []
-        inserted = False
-        for item in defs:
-            new_defs.append(item)
-            if item[0] in ("parse", "prepare") and not inserted:
-                new_defs.append(("model", "下载turbo模型"))
-                inserted = True
-        defs = new_defs if inserted else [("model", "下载turbo模型")] + defs
+        renamed = [
+            ("parse", "解析视频") if sid == "parse" else (sid, lab)
+            for sid, lab in defs
+        ]
+        defs = [("model", "下载turbo模型")] + renamed
     ids = [d[0] for d in defs]
 
     def cursor() -> int:
@@ -210,7 +204,7 @@ def pipeline_steps(task: Task) -> list:
                 int(d.get("downloaded_bytes") or 0),
                 int(d.get("total_bytes") or 0),
             )
-            item["hint"] = FIRST_MODEL_HINT
+            item["hint"] = eta.format_model_remain(_live_remain(task) if status in (RUNNING, QUEUED) else None)
         out.append(item)
     return out
 
@@ -296,18 +290,19 @@ def _format_total_wait(seconds: Optional[float]) -> str:
 
 def _attach_step_progress(task: Task, steps: list) -> list:
     """Attach countdown copy to the current pipeline step. No graphical bar."""
-    remain = _live_remain(task)
-    stamped = eta.stamp(remain)
-    for s in steps:
-        if s.get("state") != "current":
-            continue
-        s["eta_seconds"] = stamped["eta_seconds"]
-        s["eta_at"] = stamped["eta_at"]
-        s["eta_deadline"] = stamped["eta_deadline"]
-        s["eta"] = eta.format_remain(remain)
-        break
+    current = next((s for s in steps if s.get("state") == "current"), None)
+    if current:
+        remain = _live_remain(task)
+        stamped = eta.stamp(remain)
+        current["eta_seconds"] = stamped["eta_seconds"]
+        current["eta_at"] = stamped["eta_at"]
+        current["eta_deadline"] = stamped["eta_deadline"]
+        if current.get("id") == "model":
+            current["hint"] = eta.format_model_remain(remain)
+        else:
+            current["eta"] = eta.format_remain(remain)
     still_running = task.status not in (COMPLETED, FAILED, CANCELLED, NEEDS_LOGIN)
-    if still_running and task.stage != "completed":
+    if still_running and task.stage != "completed" and (not current or current.get("id") != "model"):
         wait = _format_total_wait(_total_wait_seconds(task))
         if wait:
             for s in steps:
@@ -713,7 +708,7 @@ class JobManager:
 
         latest = self.store.get(task_id)
         next_stage = "prepare" if latest and latest.source_type == "upload" else "parse"
-        next_msg = "模型已就绪，正在准备文件…" if next_stage == "prepare" else "模型已就绪，正在解析链接…"
+        next_msg = "模型已就绪，正在准备文件…" if next_stage == "prepare" else "模型已就绪，正在解析视频…"
         self.store.update(
             task_id,
             stage=next_stage,
@@ -824,18 +819,18 @@ class JobManager:
                 audio_path = Path(converted)
                 title = title or safe_filename(audio_path.stem)
             elif task.source_type == "podcast" or is_podcast_url(task.source):
+                await self._ensure_model(task_id, cancel)
+                if cancel.is_set():
+                    raise Cancelled()
                 async def _parse_podcast():
                     return await extract_podcast_audio(task.source)
                 info = await self._run_with_eta(
-                    task_id, "parse", "正在解析分享链接…", eta.prior_parse(), _parse_podcast,
+                    task_id, "parse", "正在解析视频…", eta.prior_parse(), _parse_podcast,
                 )
                 title = info.title if is_real_title(info.title or "") else title
                 duration = info.duration or duration
                 if duration:
                     self.store.update(task_id, duration=duration, title=title, flush=True)
-                await self._ensure_model(task_id, cancel)
-                if cancel.is_set():
-                    raise Cancelled()
                 self._freeze_budget(task_id, duration)
                 dl_guess = eta.prior_download(duration, "podcast")
                 dest = config.AUDIO_DIR / f"{task_id}.m4a"
@@ -858,10 +853,13 @@ class JobManager:
                 )
                 audio_path = Path(converted)
             else:
+                await self._ensure_model(task_id, cancel)
+                if cancel.is_set():
+                    raise Cancelled()
                 async def _parse_url():
                     return await self.video.fetch_subtitles(task.source, config.TEMP_DIR)
                 sub_segs, sub_title, sub_lang, sub_dur, charge = await self._run_with_eta(
-                    task_id, "parse", "正在解析链接…", eta.prior_parse(), _parse_url,
+                    task_id, "parse", "正在解析视频…", eta.prior_parse(), _parse_url,
                 )
                 title = sub_title if is_real_title(sub_title or "") else title
                 duration = sub_dur or duration
@@ -887,9 +885,6 @@ class JobManager:
                             title=title, duration=duration,
                         )
                         raise RuntimeError(CHARGE_NEED_LOGIN_HINT)
-                    await self._ensure_model(task_id, cancel)
-                    if cancel.is_set():
-                        raise Cancelled()
                     self._freeze_budget(task_id, duration)
                     loop = asyncio.get_running_loop()
                     last = [0.0]

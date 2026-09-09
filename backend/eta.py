@@ -28,6 +28,16 @@ def format_remain(seconds: Optional[float]) -> str:
     return f"剩余约{max(1, int(round(s / 60)))}分钟"
 
 
+def format_model_remain(seconds: Optional[float]) -> str:
+    """First-use model step: 可能还需要X分钟. Minutes only, so the line does not tick every second."""
+    if seconds is None:
+        return "可能还需要几分钟"
+    s = int(round(max(0.0, float(seconds))))
+    if s < 60:
+        return "可能还需要不到1分钟"
+    return f"可能还需要{max(1, int(round(s / 60)))}分钟"
+
+
 def stamp(remain: Optional[float], now: Optional[float] = None) -> dict:
     now = time.time() if now is None else now
     if remain is None:
