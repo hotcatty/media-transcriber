@@ -294,6 +294,7 @@ function compactStatus(task) {
   const cur = steps.find((s) => s.state === "current" || s.state === "needs_login");
   if (cur) {
     if (cur.state === "needs_login") return "解析失败";
+    if (cur.id === "model") return "正在下载模型";
     const lab = cur.label || "";
     if (lab.startsWith("正在")) return lab;
     return lab ? `正在${lab}` : "转录中";

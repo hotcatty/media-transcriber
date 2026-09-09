@@ -255,6 +255,11 @@ img.step-ico.is-spin {
   align-items: center;
   justify-content: center;
 }
+.job.is-collapsed .job-action-slot,
+.card:has(.btn--submit.is-busy) .job.is-collapsed .job-action-slot {
+  flex: 0 0 auto;
+  width: auto;
+}
 .steps {
   display: flex;
   flex-direction: column;
@@ -531,6 +536,11 @@ img.step-ico.is-spin {
     flex-basis: 82px;
     width: 82px;
   }
+  .job.is-collapsed .job-action-slot,
+  .card:has(.btn--submit.is-busy) .job.is-collapsed .job-action-slot {
+    flex: 0 0 auto;
+    width: auto;
+  }
 }
 
 @media (max-width: 900px) {
@@ -569,6 +579,11 @@ img.step-ico.is-spin {
   .card:has(.btn--submit.is-busy) .job-action-slot {
     flex-basis: 82px;
     width: 82px;
+  }
+  .job.is-collapsed .job-action-slot,
+  .card:has(.btn--submit.is-busy) .job.is-collapsed .job-action-slot {
+    flex: 0 0 auto;
+    width: auto;
   }
 }
 
