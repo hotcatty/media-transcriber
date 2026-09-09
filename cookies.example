@@ -1,0 +1,11 @@
+# Netscape HTTP Cookie File
+# 复制本文件为 cookies.txt，再把浏览器导出的 Cookie 粘进去。
+# cookies.txt 已被 .gitignore 忽略，不要提交真实登录凭证。
+#
+# 用途：B 站等需要登录才能解析的分享链接。
+# 导出：Chrome 安装「Get cookies.txt LOCALLY」或 EditThisCookie，
+# 登录目标网站后导出 Netscape 格式，覆盖保存为项目根目录 cookies.txt。
+#
+# 下面是格式示例（假数据，不能直接用）：
+# .bilibili.com	TRUE	/	TRUE	0	SESSDATA	paste_your_sessdata_here
+# .bilibili.com	TRUE	/	FALSE	0	bili_jct	paste_your_bili_jct_here

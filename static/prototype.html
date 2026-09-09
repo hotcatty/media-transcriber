@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文稿台 · 结构原型</title>
+  <style>
+    :root {
+      --bg: #f6f4f0;
+      --ink: #1c1b19;
+      --ink-2: #5c5954;
+      --ink-3: #8a867e;
+      --line: #e4e0d8;
+      --paper: #fffcf7;
+      --paper-edge: #ddd6c8;
+      --accent: #2f6f5e;
+      --accent-soft: #e4f0eb;
+      --warn: #9a5b00;
+      --danger: #b42318;
+      --font: "Iowan Old Style", "Palatino Linotype", "Songti SC", "Source Han Serif SC", "Noto Serif SC", Palatino, Georgia, serif;
+      --ui: -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--ui);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .proto-note {
+      font-size: 12px;
+      color: var(--ink-3);
+      letter-spacing: 0.04em;
+      text-align: center;
+      padding: 10px 16px 0;
+    }
+
+    .top {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      max-width: 880px;
+      margin: 0 auto;
+    }
+    .brand {
+      font-size: 14px;
+      color: var(--ink-2);
+      letter-spacing: 0.08em;
+    }
+    .top-actions { display: flex; gap: 8px; }
+    .ghost {
+      border: 0;
+      background: transparent;
+      color: var(--ink-2);
+      font: inherit;
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .ghost:hover { background: rgba(0,0,0,.05); }
+    .ghost .count {
+      display: inline-block;
+      min-width: 16px;
+      margin-left: 4px;
+      font-size: 11px;
+      color: var(--ink-3);
+    }
+
+    .desk {
+      max-width: 720px;
+      margin: 8px auto 48px;
+      padding: 0 20px;
+    }
+
+    .sheet {
+      background: var(--paper);
+      border: 1px solid var(--paper-edge);
+      min-height: calc(100vh - 140px);
+      padding: 48px 56px 64px;
+      position: relative;
+    }
+    .sheet::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: #e8c4c0;
+      opacity: .55;
+    }
+
+    .kicker {
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 18px;
+    }
+
+    /* —— 空白稿 —— */
+    .title-input {
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      font-family: var(--font);
+      font-size: 28px;
+      line-height: 1.35;
+      color: var(--ink);
+      padding: 0 0 14px;
+      outline: none;
+    }
+    .title-input::placeholder { color: #c4bfb4; font-style: italic; }
+    .sheet-hint {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--ink-3);
+    }
+    .drop {
+      margin-top: 36px;
+      border: 1px dashed var(--paper-edge);
+      padding: 22px 18px;
+      text-align: center;
+      color: var(--ink-3);
+      font-size: 13px;
+    }
+    .drop.over { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+    .row-actions {
+      margin-top: 28px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .btn {
+      border: 0;
+      background: var(--ink);
+      color: #fff;
+      font: inherit;
+      font-size: 14px;
+      padding: 10px 18px;
+      cursor: pointer;
+    }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-quiet {
+      background: transparent;
+      color: var(--ink-2);
+      border: 1px solid var(--line);
+    }
+
+    /* —— 正在写 / 写完共用稿眉 —— */
+    .mast {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .mast h1 {
+      font-family: var(--font);
+      font-size: 28px;
+      font-weight: 500;
+      line-height: 1.3;
+      max-width: 34ch;
+    }
+    .status {
+      font-size: 12px;
+      color: var(--ink-3);
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+      padding-top: 8px;
+    }
+    .status.live { color: var(--accent); }
+
+    .steps { list-style: none; margin: 0 0 24px; }
+    .steps li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 0;
+      font-size: 14px;
+      color: var(--ink-3);
+    }
+    .steps li.done { color: var(--ink-2); }
+    .steps li.now { color: var(--ink); }
+    .mark {
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+    .spin {
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .eta { margin-left: auto; font-size: 12px; color: var(--ink-3); }
+
+    .growing {
+      font-family: var(--font);
+      font-size: 17px;
+      line-height: 1.75;
+      color: var(--ink-2);
+      min-height: 8em;
+    }
+    .growing .caret {
+      display: inline-block;
+      width: 1px;
+      height: 1em;
+      background: var(--accent);
+      margin-left: 2px;
+      animation: blink 1s step-end infinite;
+      vertical-align: -2px;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .meta { font-size: 13px; color: var(--ink-3); margin: -12px 0 22px; }
+
+    article.transcript {
+      font-family: var(--font);
+      font-size: 17px;
+      line-height: 1.8;
+      color: var(--ink);
+    }
+    article.transcript p { margin-bottom: 1.15em; }
+
+    .inline-alert {
+      margin: 20px 0;
+      padding: 14px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+      color: var(--warn);
+    }
+    .inline-alert a, .inline-alert button.link {
+      color: var(--accent);
+      background: none;
+      border: 0;
+      font: inherit;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    /* —— 抽屉：旧稿 / 登录 —— */
+    .scrim {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(28,27,25,.28);
+      z-index: 20;
+    }
+    .scrim.on { display: block; }
+    .drawer {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      width: min(360px, 92vw);
+      background: #faf8f3;
+      border-left: 1px solid var(--paper-edge);
+      z-index: 21;
+      transform: translateX(100%);
+      transition: transform .22s ease;
+      padding: 28px 24px;
+      overflow: auto;
+    }
+    .drawer.on { transform: translateX(0); }
+    .drawer h2 {
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      color: var(--ink-3);
+      margin-bottom: 20px;
+    }
+    .stack { list-style: none; }
+    .stack li {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+    }
+    .stack li:hover .st-title { color: var(--accent); }
+    .st-title {
+      font-family: var(--font);
+      font-size: 16px;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .st-sub { margin-top: 6px; font-size: 12px; color: var(--ink-3); }
+    .st-sub.bad { color: var(--danger); }
+    .st-sub.warn { color: var(--warn); }
+
+    .login-copy { font-size: 14px; color: var(--ink-2); line-height: 1.65; margin-bottom: 16px; }
+    .login-copy ol { padding-left: 1.2em; margin: 10px 0; }
+    .field { width: 100%; margin: 8px 0 16px; padding: 8px; border: 1px solid var(--line); background: #fff; font: inherit; }
+
+    .hidden { display: none !important; }
+    @media (max-width: 640px) {
+      .sheet { padding: 32px 22px 48px; }
+      .title-input, .mast h1 { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <p class="proto-note">结构原型 · 不是视觉定稿 · 点「开始写稿」可走完一遍主路径</p>
+
+  <header class="top">
+    <div class="brand">媒体转录</div>
+    <div class="top-actions">
+      <button class="ghost" type="button" id="btnHistory">旧稿<span class="count">3</span></button>
+      <button class="ghost" type="button" id="btnLogin">登录</button>
+    </div>
+  </header>
+
+  <main class="desk">
+    <section class="sheet" id="sheet">
+
+      <!-- 空白 -->
+      <div id="stateEmpty">
+        <div class="kicker">新稿</div>
+        <input class="title-input" id="urlInput" type="url"
+          placeholder="把分享链接贴在这里"
+          value="https://www.xiaoyuzhoufm.com/episode/demo" />
+        <p class="sheet-hint">小宇宙、B 站、YouTube 的网页链接都可以。不用找 RSS。</p>
+        <div class="drop" id="drop">或把本地音频、视频放到这张稿上</div>
+        <div class="row-actions">
+          <button class="btn" type="button" id="btnStart">开始写稿</button>
+        </div>
+      </div>
+
+      <!-- 正在写 -->
+      <div id="stateWriting" class="hidden">
+        <div class="mast">
+          <h1 id="writeTitle">七夕消费彻底崩盘！两性关系的新版本要来了？</h1>
+          <div class="status live" id="writeStatus">正在写</div>
+        </div>
+        <ul class="steps" id="steps"></ul>
+        <div class="growing" id="growing"></div>
+        <div class="row-actions">
+          <button class="btn-quiet btn" type="button" id="btnCancel">取消</button>
+          <button class="btn-quiet btn hidden" type="button" id="btnReveal">在访达中显示音频</button>
+        </div>
+      </div>
+
+      <!-- 写完 -->
+      <div id="stateDone" class="hidden">
+        <div class="mast">
+          <h1>七夕消费彻底崩盘！两性关系的新版本要来了？今年的结婚率如何？</h1>
+          <div class="status">已写完 · 13 分钟音频</div>
+        </div>
+        <p class="meta">小宇宙 · 今天 11:58 · 本机备份</p>
+        <div class="row-actions" style="margin-top:0;margin-bottom:28px;">
+          <button class="btn" type="button" id="btnCopy">复制全文</button>
+          <button class="btn-quiet btn" type="button">导出 TXT</button>
+          <button class="btn-quiet btn" type="button">打开音频</button>
+        </div>
+        <article class="transcript">
+          <p>起因比较复杂。一开始是有人质疑公司的版权问题，然后有男性主播到现场，女粉丝的反应把整件事推到了舆论中心。节目想聊的不是八卦本身，而是这件事背后，消费和亲密关系正在换成另一套规则。</p>
+          <p>嘉宾提到，过去七夕更像一次集体仪式：送礼、约会、公开秀恩爱。现在更多人开始问，这段关系值不值得为节日花钱，结婚率的数字只是表层，底下是年轻人在重新估价「绑定」这件事。</p>
+          <p>如果只听音频，重点很容易被聊天带跑。写成文之后，就可以直接拿去和自己的模型讨论：哪些是情绪，哪些是结构变化。</p>
+        </article>
+        <div class="row-actions">
+          <button class="btn-quiet btn" type="button" id="btnNew">新开一张稿</button>
+        </div>
+      </div>
+
+      <!-- 异常示例（默认藏，旧稿里可打开） -->
+      <div id="stateNeedLogin" class="hidden">
+        <div class="mast">
+          <h1>B站视频 · 9月6日 11:40</h1>
+          <div class="status">写不下去</div>
+        </div>
+        <div class="inline-alert">
+          这个视频要登录才能解析。
+          <button class="link" type="button" id="btnNeedLogin">去登录</button>
+        </div>
+        <div class="row-actions">
+          <button class="btn-quiet btn" type="button" id="btnNew2">换一条链接</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="scrim" id="scrim"></div>
+
+  <aside class="drawer" id="historyDrawer" aria-label="旧稿">
+    <h2>旧稿</h2>
+    <ul class="stack">
+      <li data-open="done">
+        <div class="st-title">七夕消费彻底崩盘！两性关系的新版本要来了？</div>
+        <div class="st-sub">今天 11:58 · 已写完</div>
+      </li>
+      <li data-open="login">
+        <div class="st-title">B站视频 · 9月6日 11:40</div>
+        <div class="st-sub bad">要登录才能继续</div>
+      </li>
+      <li data-open="empty">
+        <div class="st-title">体验设计师岗位 JD 拆解</div>
+        <div class="st-sub">8月28日 · 已写完</div>
+      </li>
+    </ul>
+  </aside>
+
+  <aside class="drawer" id="loginDrawer" aria-label="登录">
+    <h2>B站登录</h2>
+    <div class="login-copy">
+      有些视频必须登录才能解析。不用复制任何代码。
+      <ol>
+        <li>先在 Chrome 打开 B 站并登录</li>
+        <li>回到这里，点下面的按钮</li>
+        <li>只保存在这台电脑，不会上传</li>
+      </ol>
+    </div>
+    <label class="sheet-hint">从哪个浏览器导入</label>
+    <select class="field">
+      <option>Chrome</option>
+      <option>Safari</option>
+      <option>Edge</option>
+      <option>Firefox</option>
+    </select>
+    <button class="btn" type="button" id="btnImport">用 Chrome 的登录状态</button>
+    <p class="sheet-hint" style="margin-top:14px;">如果弹出钥匙串权限，选允许。浏览器开着导入失败时，先完全退出再试。</p>
+  </aside>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const states = ["stateEmpty", "stateWriting", "stateDone", "stateNeedLogin"];
+    function show(id) {
+      states.forEach((s) => $(s).classList.toggle("hidden", s !== id));
+    }
+
+    const STEPS = ["解析链接", "下载音频", "语音识别", "整理文稿"];
+    const PREVIEW = "起因比较复杂。一开始是有人质疑公司的版权问题，然后有男性主播到现场，女粉丝的反应把整件事推到了舆论中心。";
+
+    function renderSteps(active) {
+      $("steps").innerHTML = STEPS.map((name, i) => {
+        let cls = "";
+        let mark = "<span class='mark'></span>";
+        let extra = "";
+        if (i < active) { cls = "done"; mark = "<span class='mark'>✓</span>"; }
+        else if (i === active) {
+          cls = "now";
+          mark = "<span class='mark'><span class='spin'></span></span>";
+          if (name === "语音识别") extra = "<span class='eta'>8 / 13 分钟 · 剩余约 30 秒</span>";
+        } else {
+          mark = "<span class='mark'>·</span>";
+        }
+        return `<li class="${cls}">${mark}<span>${name}</span>${extra}</li>`;
+      }).join("");
+    }
+
+    let timer;
+    $("btnStart").onclick = () => {
+      show("stateWriting");
+      $("btnReveal").classList.add("hidden");
+      $("growing").innerHTML = "";
+      let step = 0;
+      renderSteps(0);
+      clearInterval(timer);
+      timer = setInterval(() => {
+        step += 1;
+        if (step === 2) $("btnReveal").classList.remove("hidden");
+        if (step < STEPS.length) {
+          renderSteps(step);
+          if (step === 2) {
+            $("growing").innerHTML = PREVIEW + "<span class='caret'></span>";
+          }
+        } else {
+          clearInterval(timer);
+          show("stateDone");
+        }
+      }, 900);
+    };
+
+    function resetEmpty() {
+      clearInterval(timer);
+      show("stateEmpty");
+    }
+    $("btnCancel").onclick = resetEmpty;
+    $("btnNew").onclick = resetEmpty;
+    $("btnNew2").onclick = resetEmpty;
+
+    $("btnCopy").onclick = function () {
+      this.textContent = "已复制";
+      setTimeout(() => { this.textContent = "复制全文"; }, 1400);
+    };
+
+    function openDrawer(el) {
+      $("scrim").classList.add("on");
+      el.classList.add("on");
+    }
+    function closeDrawers() {
+      $("scrim").classList.remove("on");
+      $("historyDrawer").classList.remove("on");
+      $("loginDrawer").classList.remove("on");
+    }
+    $("btnHistory").onclick = () => openDrawer($("historyDrawer"));
+    $("btnLogin").onclick = () => openDrawer($("loginDrawer"));
+    $("btnNeedLogin").onclick = () => openDrawer($("loginDrawer"));
+    $("scrim").onclick = closeDrawers;
+    document.querySelectorAll(".stack li").forEach((li) => {
+      li.onclick = () => {
+        closeDrawers();
+        const t = li.dataset.open;
+        if (t === "done") show("stateDone");
+        else if (t === "login") show("stateNeedLogin");
+        else show("stateEmpty");
+      };
+    });
+
+    const drop = $("drop");
+    ;["dragenter", "dragover"].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add("over"); }));
+    ;["dragleave", "drop"].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.remove("over"); }));
+    drop.addEventListener("drop", () => $("btnStart").click());
+  </script>
+</body>
+</html>

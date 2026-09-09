@@ -1,0 +1,58 @@
+# Runtime data — transcripts, audio, task index, settings
+temp/
+*.log
+
+# Secrets / credentials
+cookies.txt
+.cookies-import-*.tmp
+.env
+.env.local
+
+# Machine-specific launch helpers (absolute paths)
+com.hotcat.media-transcriber.plist
+start-server.sh
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# Local model weights (1.5GB+)
+bench/models/
+*.safetensors
+*.npz
+*.bin
+*.pt
+*.onnx
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# Local model weights (1.5GB+)
+bench/models/
+*.safetensors
+*.npz
+*.bin
+*.pt
+*.onnx
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>转录小工具</title>
+  <link rel="stylesheet" href="/static/ui.css?v=desk-charge-login">
+  <link rel="stylesheet" href="/static/style.css?v=desk-charge-login">
+</head>
+<body>
+  <div class="stage">
+    <header class="support">
+      <p class="support-title">支持链接</p>
+      <div class="support-icons">
+        <img src="/static/img/icon-xiaoyuzhou.png" alt="小宇宙" width="24" height="24">
+        <img src="/static/img/icon-bilibili.png" alt="B站" width="24" height="24">
+        <img src="/static/img/icon-youtube.svg" alt="YouTube" class="icon-youtube" width="98" height="18">
+      </div>
+    </header>
+
+    <div class="desk">
+      <form class="card" id="mainCard" novalidate>
+        <div class="bar">
+          <div class="url-wrap" id="urlWrap">
+            <input id="urlInput" class="url-input" type="text" inputmode="url" autocomplete="off"
+              placeholder="粘贴小宇宙/B 站/ YouTube 网址链接">
+            <button type="button" class="url-clear" id="urlClear" aria-label="清除链接">
+              <img src="/static/img/icon-url-clear.svg" alt="" width="20" height="20">
+            </button>
+          </div>
+          <button type="submit" class="btn btn--solid btn--submit" id="submitBtn">
+            <span class="btn-label-full">转录为逐字稿</span>
+            <span class="btn-label-short">转录</span>
+          </button>
+        </div>
+        <div class="job" id="jobPanel" hidden></div>
+      </form>
+      <button type="button" class="link link--on-dark" id="historyBtn">查看历史记录</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="loginOverlay" hidden>
+    <div class="modal" role="dialog" aria-labelledby="loginTitle">
+      <div class="modal-head">
+        <h2 id="loginTitle">读取登录状态</h2>
+        <button type="button" class="icon-btn" id="loginClose" aria-label="关闭">
+          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+        </button>
+      </div>
+      <p class="modal-lead">
+        将读取你选的浏览器里已经有的登录状态，用于解析登录后才能看的视频。读的不是账号密码，也不会发到网上。
+        <button type="button" class="icon-btn icon-btn--sm" id="loginInfoBtn" aria-label="了解读取流程" aria-expanded="false">
+          <img src="/static/img/icon-info.svg" alt="" width="20" height="20">
+        </button>
+      </p>
+      <div class="info-pop" id="loginInfoPop" hidden>
+        点「点击读取」后，程序只在这台电脑上查看你选的浏览器里有没有该网站的登录 Cookie，拷一份给解析用。不是账号密码，也不会发到网上。没登录、无痕或没保存登录会读不到。
+      </div>
+      <div class="login-row">
+        <label class="field">
+          <span>选择浏览器</span>
+          <select id="browserSelect"></select>
+        </label>
+        <button type="button" class="btn btn--solid" id="importCookieBtn">点击读取</button>
+        <button type="button" class="link link--muted" id="noCookieBtn">没有登录 Cookie？</button>
+      </div>
+      <p class="login-msg" id="loginMsg" hidden></p>
+    </div>
+  </div>
+
+  <div class="overlay" id="helpOverlay" hidden>
+    <div class="modal modal-sm" role="dialog" aria-labelledby="helpTitle">
+      <div class="modal-head">
+        <h2 id="helpTitle">无法获取登录 Cookie？</h2>
+        <button type="button" class="icon-btn" id="helpClose" aria-label="关闭">
+          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+        </button>
+      </div>
+      <p class="modal-lead" id="helpBody">可能是这台电脑上的浏览器还未登录该网站，因此无法获取登录 Cookie。</p>
+      <a class="link" id="helpGo" href="https://www.bilibili.com" target="_blank" rel="noopener">前往bilibili.com</a>
+    </div>
+  </div>
+
+  <div class="overlay" id="transcriptOverlay" hidden>
+    <div class="modal modal-sheet" role="dialog" aria-labelledby="sheetTitle">
+      <div class="sheet-chrome">
+      <button type="button" class="icon-btn sheet-close" id="sheetClose" aria-label="关闭">
+        <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+      </button>
+      <div class="sheet-top">
+        <div class="sheet-info">
+          <div class="sheet-head">
+            <h2 id="sheetTitle"></h2>
+            <a class="icon-btn" id="sheetSource" href="#" target="_blank" rel="noopener" hidden aria-label="打开原链接">
+              <img src="/static/img/icon-external.svg" alt="" width="20" height="20">
+            </a>
+          </div>
+          <div class="sheet-meta">
+            <span id="sheetWhen"></span>
+            <div class="meta-links">
+              <button type="button" class="action action--sheet" id="copyBtn">
+                <img src="/static/img/icon-sheet-copy.svg" alt="" width="16" height="16">
+                <span id="copyBtnLabel">复制全文</span>
+              </button>
+              <button type="button" class="action action--sheet" id="openAudioBtn" hidden>
+                <img src="/static/img/icon-sheet-audio.svg" alt="" width="16" height="16">
+                <span>打开音频</span>
+              </button>
+              <div class="export">
+                <button type="button" class="action action--sheet" id="exportBtn">
+                  <span>导出为</span>
+                  <img src="/static/img/icon-sheet-chevron.svg" alt="" width="16" height="16">
+                </button>
+                <div class="menu menu--export" id="exportMenu" hidden>
+                  <button type="button" class="menu-item" data-fmt="txt">Text</button>
+                  <button type="button" class="menu-item" data-fmt="md">Markdown</button>
+                  <button type="button" class="menu-item" data-fmt="srt">SRT</button>
+                  <button type="button" class="menu-item" data-fmt="json">JSON</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="sheet-rule" aria-hidden="true"></div>
+      </div>
+      </div>
+      <div class="sheet-clip scroll" id="sheetClip">
+        <div class="sheet-body" id="sheetBody"></div>
+      </div>
+      <div class="sheet-fade" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="historyOverlay" hidden>
+    <div class="modal" role="dialog" aria-labelledby="historyTitle">
+      <div class="modal-head">
+        <h2 id="historyTitle">历史记录</h2>
+        <button type="button" class="icon-btn" id="historyClose" aria-label="关闭">
+          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+        </button>
+      </div>
+      <div class="history-list scroll" id="historyList"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden role="status"></div>
+
+  <script src="/static/ui.js?v=desk-charge-login"></script>
+  <script src="/static/app.js?v=desk-charge-login"></script>
+</body>
+</html>

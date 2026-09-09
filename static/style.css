@@ -1,0 +1,573 @@
+/*
+  页面结构：深空舞台、首页卡片、任务步骤、弹层。
+  可复用零件（按钮、链接、历史行）在 ui.css。
+*/
+:root {
+  --white: #fff;
+  --black: #000;
+  --ink: #000;
+  --ink-60: rgba(0, 0, 0, 0.6);
+  --ink-40: rgba(0, 0, 0, 0.4);
+  --ink-80: rgba(0, 0, 0, 0.8);
+  --white-80: rgba(255, 255, 255, 0.8);
+  --input: rgba(0, 0, 0, 0.03);
+  --link: #185488;
+  --warn: #edc200;
+  --danger: #fe3636;
+  --mask: rgba(0, 0, 0, 0.5);
+  --line: rgba(0, 0, 0, 0.08);
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --radius-card: 20px;
+  --radius-btn: 12px;
+  --radius-field: 12px;
+  --radius-select: 8px;
+  --card-w: 830px;
+  /* 只缩放落点，字号/组件尺寸用稿上的 px，不再随窗口放大。 */
+  --s: max(100vw / 1440, 100vh / 950);
+  --support-y: 44;
+  --desk-y: 475;
+  --support-top: calc((100vh - 950 * var(--s)) / 2 + var(--support-y) * var(--s));
+  --desk-top: calc((100vh - 950 * var(--s)) / 2 + var(--desk-y) * var(--s));
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+button, input, select { font: inherit; }
+button { cursor: pointer; border: 0; background: none; color: inherit; }
+a { color: inherit; }
+[hidden] { display: none !important; }
+
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  background: #000 url("/static/img/space-bg.png") center / cover no-repeat fixed;
+  -webkit-font-smoothing: antialiased;
+}
+.card, .modal {
+  -webkit-font-smoothing: auto;
+}
+
+.stage {
+  position: relative;
+  min-height: 100%;
+  padding: 0 24px;
+}
+
+.support {
+  position: absolute;
+  top: var(--support-top);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 201.5px;
+}
+.support-title {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--white-80);
+  text-align: center;
+}
+.support-icons {
+  display: flex;
+  align-items: center;
+  gap: 13.5px;
+  opacity: 0.6;
+}
+.support-icons img {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.support-icons .icon-youtube {
+  width: 98px;
+  height: 18px;
+  object-fit: contain;
+  border-radius: 0;
+}
+
+.desk {
+  --desk-top: calc((100vh - 950 * var(--s)) / 2 + var(--desk-y) * var(--s));
+  position: absolute;
+  top: var(--desk-top);
+  left: 50%;
+  transform: translate(-50%, 0);
+  width: min(var(--card-w), calc(100% - 48px));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 32px;
+}
+
+/*
+  BETA: while a job is open, slide the desk up to Figma 23:717 (Y=400).
+  Idle stays at --desk-y: 475. To revert: CENTER_JOB_DESK = false in app.js.
+*/
+.desk.is-centered {
+  --desk-y: 400;
+  top: calc((100vh - 950 * var(--s)) / 2 + 400 * var(--s));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .desk {
+    transition:
+      top 0.48s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.48s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+.card {
+  container-type: inline-size;
+  background: var(--white);
+  border: 1px solid var(--white);
+  border-radius: var(--radius-card);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  color: #000;
+  overflow-x: hidden;
+}
+.card:has(#jobPanel:not([hidden])) {
+  padding-bottom: 24px;
+}
+
+.bar {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 24px;
+  align-items: stretch;
+}
+.url-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.url-input {
+  display: block;
+  width: 100%;
+  height: 45px;
+  padding: 12px 40px 12px 12px;
+  border: 0;
+  border-radius: var(--radius-field);
+  background: var(--input);
+  font-size: 16px;
+  font-weight: 300;
+  color: #000;
+  outline: none;
+}
+.url-input::placeholder { color: var(--ink-40); }
+.url-input:disabled,
+.url-input:read-only { color: var(--ink-40); }
+.url-clear {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  border-radius: 50%;
+  transition: opacity 0.12s ease, background 0.12s ease, transform 0.12s ease;
+}
+@media (hover: hover) {
+  .url-wrap.is-filled .url-clear:hover { background: rgba(0, 0, 0, 0.08); }
+}
+.url-clear:active { background: rgba(0, 0, 0, 0.12); transform: scale(0.92); }
+.url-clear img {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+.url-wrap.is-filled:hover .url-clear,
+.url-wrap.is-filled:focus-within .url-clear {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.card:has(.btn--submit.is-busy) .job-action-slot {
+  flex-basis: 82px;
+  width: 82px;
+}
+
+.spin {
+  display: block;
+  width: 24px;
+  height: 24px;
+  margin: 0 auto;
+  animation: spin 0.8s linear infinite;
+}
+img.step-ico.is-spin {
+  animation: spin 0.8s linear infinite;
+  border: 0;
+  border-radius: 0;
+  width: 20px;
+  height: 20px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.job {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 0;
+  min-width: 0;
+  overflow-x: hidden;
+}
+.job-head {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 24px;
+}
+.job-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  padding-left: 12px;
+}
+.job-title img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  flex: none;
+}
+.job-title span {
+  font-size: 18px;
+  font-weight: 400;
+  color: #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.job-action-slot {
+  flex: 0 0 132px;
+  width: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 68px;
+  min-height: 21px;
+  flex-wrap: nowrap;
+  width: max-content;
+  max-width: 100%;
+}
+.step-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+.step-ico {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.step-label {
+  font-size: 16px;
+  font-weight: 300;
+  color: var(--ink-40);
+}
+.step.current .step-label,
+.step.done .step-label,
+.step.needs_login .step-label,
+.step.failed .step-label { color: #000; }
+.step-extra {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  color: var(--ink-60);
+  font-weight: 300;
+  white-space: nowrap;
+  flex: none;
+}
+.step-hint { font-size: 16px; color: var(--ink-60); font-weight: 300; }
+.step-login {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  flex: none;
+  flex-wrap: nowrap;
+}
+.step-login .need {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 16px;
+  color: var(--ink-60);
+}
+.step-login .link { flex: none; font-weight: 300; }
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--mask);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 20;
+  overflow: hidden;
+}
+.overlay[hidden] { display: none !important; }
+
+.modal {
+  width: min(860px, 100%);
+  background: var(--white);
+  border-radius: var(--radius-card);
+  padding: 30px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  max-height: calc(100vh - 48px);
+  position: relative;
+}
+.modal-sm { max-width: 860px; }
+.modal-sheet {
+  width: min(860px, 100%);
+  height: min(860px, calc(100vh - 48px));
+  padding: 20px 40px 40px;
+  gap: 0;
+  overflow: hidden;
+  --sheet-x: 40px;
+  --sheet-y: 40px;
+}
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.modal-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+#sheetTitle {
+  font-size: 18px;
+  font-weight: 500;
+  color: #000;
+}
+.modal-lead {
+  font-size: 16px;
+  color: var(--ink-60);
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  line-height: 1.4;
+}
+.info-pop {
+  margin-top: -16px;
+  padding: 12px 14px;
+  background: #f6f6f6;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-60);
+}
+
+.login-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 56px;
+  padding: 0 12px;
+  flex-wrap: wrap;
+}
+.login-msg { font-size: 14px; color: var(--danger); }
+.login-msg.ok { color: #1a7f4b; }
+
+.sheet-chrome {
+  flex: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 2;
+}
+.sheet-close { align-self: flex-end; flex: none; }
+.sheet-top {
+  flex: none;
+  width: 100%;
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-bottom: 24px;
+}
+.sheet-clip {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.sheet-info {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+}
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.sheet-head .icon-btn {
+  width: 20px;
+  height: 20px;
+  opacity: 1;
+}
+.sheet-head h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-meta {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px 44px;
+  width: 100%;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-60);
+}
+#sheetWhen {
+  white-space: nowrap;
+  flex: none;
+}
+.meta-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  min-width: 0;
+}
+.export { position: relative; }
+.sheet-rule {
+  width: 100%;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.12);
+  flex: none;
+}
+.sheet-body {
+  font-size: 16px;
+  font-weight: 300;
+  line-height: 1.7;
+  color: var(--ink-80);
+  white-space: pre-wrap;
+  padding-right: 8px;
+  padding-bottom: 48px;
+}
+.sheet-fade {
+  position: absolute;
+  left: var(--sheet-x, 40px);
+  right: 8px;
+  bottom: 0;
+  height: calc(93px + var(--sheet-y, 40px) + 2px);
+  z-index: 1;
+  pointer-events: none;
+  /* Solid white covers the padding plus a few pixels of the clip edge so
+     subpixel-tall windows cannot leak the next line under the fade. */
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0) 30px,
+    #fff 88px,
+    #fff 100%
+  );
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+#historyOverlay .modal {
+  gap: 24px;
+  overflow: hidden;
+}
+
+@container (max-width: 620px) {
+  .bar { gap: 12px; }
+  .btn--submit:not(.is-busy) {
+    flex: 0 0 64px;
+    width: 64px;
+    padding: 12px 14px;
+  }
+  .btn-label-full { display: none; }
+  .btn-label-short { display: inline; }
+  .job-action-slot {
+    flex-basis: 64px;
+    width: 64px;
+  }
+  .card:has(.btn--submit.is-busy) .job-action-slot {
+    flex-basis: 82px;
+    width: 82px;
+  }
+}
+
+@media (max-width: 900px) {
+  .bar,
+  .job-head { gap: 12px; }
+  .overlay { padding: 12px; }
+  .modal,
+  .modal-sheet {
+    padding: 20px 16px 24px;
+    --sheet-x: 16px;
+    --sheet-y: 24px;
+  }
+  .login-row { gap: 16px; padding: 0; }
+  .link--muted { margin-left: 0; }
+  .sheet-meta { gap: 8px 16px; }
+  .step {
+    gap: 16px;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .step-login { gap: 12px; flex-wrap: wrap; }
+}
+
+@media (max-width: 720px) {
+  .btn--submit:not(.is-busy) {
+    flex: 0 0 64px;
+    width: 64px;
+    padding: 12px 14px;
+  }
+  .btn-label-full { display: none; }
+  .btn-label-short { display: inline; }
+  .job-action-slot {
+    flex-basis: 64px;
+    width: 64px;
+  }
+  .card:has(.btn--submit.is-busy) .job-action-slot {
+    flex-basis: 82px;
+    width: 82px;
+  }
+}
+
