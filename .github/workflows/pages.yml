@@ -1,4 +1,4 @@
-name: Deploy door
+name: Deploy site
 on:
   push:
     branches: [main]
@@ -17,9 +17,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Assemble public site from the same UI
+        run: |
+          python3 <<'PY'
+          import shutil
+          from pathlib import Path
+          src = Path("static")
+          dst = Path("site")
+          if dst.exists():
+              shutil.rmtree(dst)
+          shutil.copytree(src, dst, ignore=shutil.ignore_patterns("prototype.html", "_dl"))
+          html = (dst / "index.html").read_text()
+          inject = '<script>window.MT_API="http://127.0.0.1:8766";</script>\n  '
+          html = html.replace("<head>\n", "<head>\n  " + inject, 1)
+          html = html.replace('href="/static/', 'href="./')
+          html = html.replace('src="/static/', 'src="./')
+          (dst / "index.html").write_text(html)
+          for name in ("style.css", "ui.css"):
+              css = (dst / name).read_text()
+              (dst / name).write_text(css.replace('url("/static/', 'url("./'))
+          PY
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: site
       - id: deployment
         uses: actions/deploy-pages@v4

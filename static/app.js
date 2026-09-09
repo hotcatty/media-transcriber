@@ -159,10 +159,10 @@ function platformOf(source) {
 
 function platformIcon(source) {
   const p = platformOf(source);
-  if (p === "bilibili") return "/static/img/icon-bilibili.png";
-  if (p === "xiaoyuzhou") return "/static/img/icon-xiaoyuzhou.png";
-  if (p === "youtube") return "/static/img/icon-youtube-mark.svg";
-  return "/static/img/icon-xiaoyuzhou.png";
+  if (p === "bilibili") return mtAsset("/static/img/icon-bilibili.png");
+  if (p === "xiaoyuzhou") return mtAsset("/static/img/icon-xiaoyuzhou.png");
+  if (p === "youtube") return mtAsset("/static/img/icon-youtube-mark.svg");
+  return mtAsset("/static/img/icon-xiaoyuzhou.png");
 }
 
 function syncLoginSite(task) {
@@ -188,7 +188,7 @@ function setBusy(on) {
   btn.disabled = on;
   btn.classList.toggle("is-busy", on);
   if (on) {
-    btn.innerHTML = `<img class="spin" src="/static/img/icon-btn-spin.svg" alt="" width="24" height="24">`;
+    btn.innerHTML = `<img class="spin" src="${mtAsset("/static/img/icon-btn-spin.svg")}" alt="" width="24" height="24">`;
     input.readOnly = true;
   } else {
     syncSubmitLabel();
@@ -247,10 +247,10 @@ function maybeResetToIdleFromUrl() {
 
 function stepIcon(state) {
   const src =
-    state === "current" ? "/static/img/icon-spinner.svg"
-    : state === "done" ? "/static/img/icon-done.svg"
-    : (state === "failed" || state === "needs_login") ? "/static/img/icon-fail.svg"
-    : "/static/img/icon-pending.svg";
+    state === "current" ? mtAsset("/static/img/icon-spinner.svg")
+    : state === "done" ? mtAsset("/static/img/icon-done.svg")
+    : (state === "failed" || state === "needs_login") ? mtAsset("/static/img/icon-fail.svg")
+    : mtAsset("/static/img/icon-pending.svg");
   const cls = state === "current" ? "step-ico is-spin" : "step-ico";
   return `<img class="${cls}" src="${src}" alt="" width="20" height="20">`;
 }
@@ -321,13 +321,13 @@ function renderJob(task) {
       id: "expandJobBtn",
       extra: "action--on-card",
       html: `${escapeHtml(compactStatus(task))}
-      <img src="/static/img/icon-job-chevron.svg" alt="" width="20" height="20">`,
+      <img src="${mtAsset("/static/img/icon-job-chevron.svg")}" alt="" width="20" height="20">`,
     });
   } else if (status === "completed") {
     action = UI.actionBtn({
       extra: "action--on-card",
       attrs: `data-open="${task.id}"`,
-      html: `查看文稿 <img src="/static/img/icon-chevron-right.svg" alt="" width="20" height="20">`,
+      html: `查看文稿 <img src="${mtAsset("/static/img/icon-chevron-right.svg")}" alt="" width="20" height="20">`,
     });
   } else if (["queued", "running"].includes(status)) {
     action = UI.actionBtn({
@@ -335,7 +335,7 @@ function renderJob(task) {
       extra: "action--stop",
       attrs: `aria-label="停止转录"`,
       html: `<span class="job-stop-label">停止转录</span>
-      <img class="job-stop-x" src="/static/img/icon-stop.svg" alt="" width="20" height="20">`,
+      <img class="job-stop-x" src="${mtAsset("/static/img/icon-stop.svg")}" alt="" width="20" height="20">`,
     });
   } else if (interrupted) {
     action = UI.actionBtn({
@@ -442,7 +442,7 @@ function applyTask(task, opts) {
 function startSSE(taskId) {
   stopSSE();
   currentTaskId = taskId;
-  eventSource = new EventSource(`/api/task-stream/${taskId}`);
+  eventSource = new EventSource(mtApi(`/api/task-stream/${taskId}`));
   eventSource.onmessage = (ev) => {
     try {
       const task = JSON.parse(ev.data);
@@ -453,7 +453,7 @@ function startSSE(taskId) {
   eventSource.onerror = async () => {
     stopSSE();
     try {
-      const r = await fetch(`/api/task-status/${taskId}`);
+      const r = await fetch(mtApi(`/api/task-status/${taskId}`));
       if (!r.ok) return;
       const task = await r.json();
       applyTask(task);
@@ -496,11 +496,11 @@ async function submitUrl(url) {
   try {
     const fd = new FormData();
     fd.append("url", url);
-    const resp = await fetch("/api/transcribe", { method: "POST", body: fd });
+    const resp = await fetch(mtApi("/api/transcribe"), { method: "POST", body: fd });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(detailText(data, `HTTP ${resp.status}`));
     if (data.status === "completed" && data.task_id) {
-      const r = await fetch(`/api/tasks/${data.task_id}`);
+      const r = await fetch(mtApi(`/api/tasks/${data.task_id}`));
       if (r.ok) applyTask(await r.json());
       return;
     }
@@ -555,7 +555,7 @@ function openLogin() {
 async function loadBrowsers() {
   const sel = $("browserSelect");
   try {
-    const r = await fetch("/api/browsers");
+    const r = await fetch(mtApi("/api/browsers"));
     const data = await r.json();
     const list = data.browsers || [];
     const opts = list.length ? list : [
@@ -586,7 +586,7 @@ async function importCookies() {
     const fd = new FormData();
     fd.append("browser", browser);
     fd.append("site", loginSite);
-    const resp = await fetch("/api/import-cookies", { method: "POST", body: fd });
+    const resp = await fetch(mtApi("/api/import-cookies"), { method: "POST", body: fd });
     const data = await resp.json().catch(() => ({}));
     const msg = detailText(data, "读取失败");
     if (!resp.ok) {
@@ -602,7 +602,7 @@ async function importCookies() {
     setLoginMsg(data.message || "已读取", true);
     closeOverlay("loginOverlay");
     if (currentTaskId) {
-      const r = await fetch(`/api/tasks/${currentTaskId}/resume`, { method: "POST" });
+      const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/resume`), { method: "POST" });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
         setLoginMsg(detailText(body, "无法继续解析"), false);
@@ -642,7 +642,7 @@ async function openTranscript(task) {
   if (clip) clip.scrollTop = 0;
   openOverlay("transcriptOverlay");
   try {
-    const r = await fetch(`/api/tasks/${task.id}/text`);
+    const r = await fetch(mtApi(`/api/tasks/${task.id}/text`));
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       $("sheetBody").textContent = "";
@@ -674,7 +674,7 @@ async function copyText() {
 async function downloadFmt(fmt) {
   if (!currentTaskId) return;
   try {
-    const r = await fetch(`/api/tasks/${currentTaskId}/export/${fmt}`);
+    const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/export/${fmt}`));
     if (!r.ok) {
       const data = await r.json().catch(() => ({}));
       showToast(detailText(data, "还没有可导出的正文"));
@@ -708,7 +708,7 @@ async function revealAudio() {
     return;
   }
   try {
-    const r = await fetch(`/api/tasks/${currentTaskId}/reveal-audio`, { method: "POST" });
+    const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/reveal-audio`), { method: "POST" });
     const data = await r.json().catch(() => ({}));
     if (r.ok && data.ok !== false) return;
     const msg = detailText(data, "音频文件已丢失");
@@ -736,7 +736,7 @@ function histStatus(t) {
 async function loadHistory() {
   const list = $("historyList");
   try {
-    const r = await fetch("/api/tasks");
+    const r = await fetch(mtApi("/api/tasks"));
     const data = await r.json();
     const tasks = data.tasks || [];
     if (!tasks.length) {
@@ -763,7 +763,7 @@ function closeHistMenus() {
     const img = wrap.querySelector(".icon-btn--more img.dots-off");
     const menu = wrap.querySelector(".menu--hist");
     if (btn) btn.setAttribute("aria-expanded", "false");
-    if (img) img.src = "/static/img/icon-hist-dots.svg";
+    if (img) img.src = mtAsset("/static/img/icon-hist-dots.svg");
     if (menu) menu.hidden = true;
   });
 }
@@ -777,12 +777,12 @@ function toggleHistMenu(wrap) {
   const img = wrap.querySelector(".icon-btn--more img.dots-off");
   const menu = wrap.querySelector(".menu--hist");
   if (btn) btn.setAttribute("aria-expanded", "true");
-  if (img) img.src = "/static/img/icon-hist-dots-on.svg";
+  if (img) img.src = mtAsset("/static/img/icon-hist-dots-on.svg");
   if (menu) menu.hidden = false;
 }
 
 async function openHistoryItem(id) {
-  const r = await fetch(`/api/tasks/${id}`);
+  const r = await fetch(mtApi(`/api/tasks/${id}`));
   if (!r.ok) return;
   const task = await r.json();
   jobCollapsed = false;
@@ -798,7 +798,7 @@ async function openHistoryItem(id) {
 
 async function resumeTask(id) {
   try {
-    const resp = await fetch(`/api/tasks/${id}/resume`, { method: "POST" });
+    const resp = await fetch(mtApi(`/api/tasks/${id}/resume`), { method: "POST" });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || data.ok === false) {
       showToast(detailText(data, "无法继续转录"));
@@ -851,14 +851,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.closest("#stopBtn")) {
       const failed = currentTask && currentTask.status === "failed";
       if (!failed && currentTaskId) {
-        await fetch(`/api/tasks/${currentTaskId}/cancel`, { method: "POST" });
+        await fetch(mtApi(`/api/tasks/${currentTaskId}/cancel`), { method: "POST" });
       }
       resetToIdle();
       return;
     }
     if (e.target.closest("[data-open]")) {
       const id = e.target.closest("[data-open]").getAttribute("data-open");
-      const r = await fetch(`/api/tasks/${id}`);
+      const r = await fetch(mtApi(`/api/tasks/${id}`));
       if (r.ok) openTranscript(await r.json());
       return;
     }
@@ -956,7 +956,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (resumeLogin) {
       const id = resumeLogin.getAttribute("data-resume-login");
-      const r = await fetch(`/api/tasks/${id}`);
+      const r = await fetch(mtApi(`/api/tasks/${id}`));
       if (r.ok) {
         const task = await r.json();
         jobCollapsed = false;
@@ -969,7 +969,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (del) {
       e.stopPropagation();
       const id = del.getAttribute("data-del");
-      await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+      await fetch(mtApi(`/api/tasks/${id}`), { method: "DELETE" });
       if (id === currentTaskId) resetToIdle();
       closeHistMenus();
       loadHistory();
@@ -992,7 +992,7 @@ document.addEventListener("DOMContentLoaded", () => {
       history.replaceState({}, "", "/");
       $("mainCard").requestSubmit();
     } else {
-      fetch("/api/tasks").then((r) => r.json()).then((data) => {
+      fetch(mtApi("/api/tasks")).then((r) => r.json()).then((data) => {
         const running = (data.tasks || []).find((t) =>
           t.status === "running" || t.status === "queued" || t.status === "needs_login"
         );

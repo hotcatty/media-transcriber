@@ -3,7 +3,7 @@
   function iconBtn({ id, aria, src, size = 24, extra = "", attrs = "" }) {
     const idAttr = id ? ` id="${id}"` : "";
     return `<button type="button" class="icon-btn ${extra}"${idAttr} aria-label="${aria}" ${attrs}>
-      <img src="${src}" alt="" width="${size}" height="${size}">
+      <img src="${(global.mtAsset || ((p) => p))(src)}" alt="" width="${size}" height="${size}">
     </button>`;
   }
 
@@ -37,8 +37,8 @@
         </div>
         <div class="hist-more-wrap">
           <button type="button" class="icon-btn icon-btn--more" data-menu="${id}" aria-label="更多" aria-expanded="false">
-            <img class="dots-off" src="/static/img/icon-hist-dots.svg" alt="" width="24" height="24">
-            <img class="dots-hover" src="/static/img/icon-hist-dots-hover.svg" alt="" width="24" height="24">
+            <img class="dots-off" src="${(global.mtAsset || ((p) => p))("/static/img/icon-hist-dots.svg")}" alt="" width="24" height="24">
+            <img class="dots-hover" src="${(global.mtAsset || ((p) => p))("/static/img/icon-hist-dots-hover.svg")}" alt="" width="24" height="24">
           </button>
           <div class="menu menu--hist" hidden>
             <button type="button" class="menu-item" data-del="${id}">删除</button>
