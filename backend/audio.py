@@ -9,6 +9,7 @@ half.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -22,9 +23,15 @@ logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
 
+_HELPER_BIN = Path.home() / "Library" / "Application Support" / "media-transcriber" / "bin"
+
 
 def find_binary(name: str) -> str:
+    env_key = {"ffmpeg": "MT_FFMPEG", "ffprobe": "MT_FFPROBE"}.get(name, "")
+    env_path = os.getenv(env_key) if env_key else None
     for candidate in (
+        env_path or "",
+        str(_HELPER_BIN / name),
         f"/opt/homebrew/bin/{name}",   # Apple Silicon Homebrew
         f"/usr/local/bin/{name}",      # Intel Homebrew
         shutil.which(name) or "",

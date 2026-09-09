@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="refresh" content="3">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>转录小工具</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      color: #fff;
+      background: #000;
+    }
+    .card {
+      width: min(520px, calc(100% - 48px));
+      background: #fff;
+      color: #000;
+      border-radius: 20px;
+      padding: 32px 40px;
+    }
+    h1 { font-size: 18px; font-weight: 600; margin: 0 0 12px; }
+    p { font-size: 16px; line-height: 1.5; color: rgba(0,0,0,.6); margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>正在准备本机组件</h1>
+    <p>第一次需要自动下载运行环境，大约几分钟。完成后会进入转录页，不用再操作。</p>
+  </div>
+  <script>
+    async function hop() {
+      try {
+        const r = await fetch("/api/ping", { cache: "no-store" });
+        const j = await r.json();
+        if (j && j.ok && j.preparing === false) location.replace("/");
+      } catch (e) {}
+    }
+    hop();
+    setInterval(hop, 2000);
+  </script>
+</body>
+</html>

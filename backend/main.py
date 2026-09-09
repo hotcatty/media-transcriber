@@ -17,7 +17,7 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import audio as audio_utils
@@ -60,10 +60,34 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def allow_private_network(request: Request, call_next):
+    """Allow the public door page (HTTPS) to probe this local helper."""
+    if (
+        request.method == "OPTIONS"
+        and request.headers.get("access-control-request-private-network") == "true"
+    ):
+        origin = request.headers.get("origin", "*")
+        return Response(
+            status_code=204,
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+                "Access-Control-Allow-Headers": request.headers.get(
+                    "access-control-request-headers", "*"
+                ),
+                "Access-Control-Allow-Private-Network": "true",
+            },
+        )
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 STATIC_DIR = config.PROJECT_ROOT / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -72,6 +96,11 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/")
 async def read_root():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/api/ping")
+async def ping():
+    return {"ok": True, "app": "media-transcriber", "preparing": False}
 
 
 @app.get("/api/health")

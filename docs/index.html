@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>转录小工具</title>
+  <meta name="description" content="把小宇宙 / B 站 / YouTube 分享链接转成简体逐字稿。打开这个网址就能用，第一次会在本机准备组件。">
+  <link rel="stylesheet" href="./door.css">
+</head>
+<body>
+  <div class="stage">
+    <header class="support">
+      <p class="support-title">支持链接</p>
+      <div class="support-icons">
+        <img src="./img/icon-xiaoyuzhou.png" alt="小宇宙" width="24" height="24">
+        <img src="./img/icon-bilibili.png" alt="B站" width="24" height="24">
+        <img src="./img/icon-youtube.svg" alt="YouTube" class="icon-youtube" width="98" height="18">
+      </div>
+    </header>
+
+    <div class="desk">
+      <div class="card">
+        <div class="bar">
+          <div class="url-wrap">
+            <input class="url-input" type="text" readonly
+              placeholder="粘贴小宇宙/B 站/ YouTube 网址链接">
+          </div>
+          <button type="button" class="btn btn--solid btn--submit" id="startBtn">
+            开始使用
+          </button>
+        </div>
+        <p class="hint" id="statusHint">正在看看本机组件在不在…</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="installOverlay" hidden>
+    <div class="modal" role="dialog" aria-labelledby="installTitle">
+      <div class="modal-head">
+        <h2 id="installTitle">先在这台电脑准备一下</h2>
+        <button type="button" class="icon-btn" id="installClose" aria-label="关闭">×</button>
+      </div>
+      <p class="modal-lead" id="installLead">
+        转录在你自己电脑上跑，模型和登录状态都留在本机。第一次要装一个很小的本机组件，之后再打开这个网址就能用。
+      </p>
+      <ol class="steps" id="installSteps">
+        <li>点下面，下载本机组件</li>
+        <li>打开压缩包，把「转录小工具」拖到「应用程序」</li>
+        <li>双击打开。系统若说无法验证，按住 Control 再点它，选「打开」</li>
+        <li>回到这里，再点「开始使用」</li>
+      </ol>
+      <p class="modal-lead" id="otherHint" hidden></p>
+      <div class="actions">
+        <a class="btn btn--solid" id="downloadBtn" href="https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-macOS.zip">下载本机组件</a>
+        <button type="button" class="link" id="retryBtn">我已经打开了</button>
+      </div>
+    </div>
+  </div>
+  <script src="./door.js"></script>
+</body>
+</html>

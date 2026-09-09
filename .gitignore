@@ -12,6 +12,9 @@ cookies.txt
 com.hotcat.media-transcriber.plist
 start-server.sh
 
+# Packaged helper binaries (rebuilt by packaging/build-macos-zip.sh)
+packaging/macos/dist/
+
 # Python
 __pycache__/
 *.py[cod]

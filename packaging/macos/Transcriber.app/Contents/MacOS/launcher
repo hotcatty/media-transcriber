@@ -1,0 +1,261 @@
+#!/bin/bash
+# 转录小工具 · 本机助手
+# 网页点「开始使用」或双击本程序时运行：准备环境、拉起本地服务、打开浏览器。
+set -u
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+RESOURCES="$ROOT/Contents/Resources"
+DATA="${HOME}/Library/Application Support/media-transcriber"
+LOG_DIR="${HOME}/Library/Logs"
+LOG="$LOG_DIR/media-transcriber.log"
+PIDFILE="$DATA/server.pid"
+PORT="${MT_PORT:-8766}"
+LOCAL="http://127.0.0.1:${PORT}"
+REPO="hotcatty/media-transcriber"
+ARCH="$(uname -m)"
+
+mkdir -p "$DATA/bin" "$DATA/app" "$LOG_DIR"
+exec >>"$LOG" 2>&1
+
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+
+notify() {
+  /usr/bin/osascript -e "display notification \"$2\" with title \"转录小工具\"" >/dev/null 2>&1 || true
+}
+
+alert() {
+  /usr/bin/osascript -e "display dialog \"$1\" with title \"转录小工具\" buttons {\"好\"} default button \"好\"" >/dev/null 2>&1 || true
+}
+
+helper_ready() {
+  local body
+  body="$(curl -fsS --max-time 1 "${LOCAL}/api/ping" 2>/dev/null)" || return 1
+  printf '%s' "$body" | grep -q '"app":"media-transcriber"\|"app": "media-transcriber"' || return 1
+  printf '%s' "$body" | grep -q '"preparing": true\|"preparing":true' && return 1
+  return 0
+}
+
+open_app() {
+  /usr/bin/open "$LOCAL"
+}
+
+if helper_ready; then
+  log "already running"
+  open_app
+  exit 0
+fi
+
+export MT_HOST="127.0.0.1"
+export MT_PORT="$PORT"
+export MT_TEMP_DIR="$DATA/temp"
+export MT_COOKIE_FILE="$DATA/cookies.txt"
+export MT_MODELS_DIR="${HOME}/.cache/media-transcriber/models"
+export MT_FFMPEG="$DATA/bin/ffmpeg"
+export MT_FFPROBE="$DATA/bin/ffprobe"
+export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+export UV_INDEX_URL="${UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+export PATH="$DATA/bin:$RESOURCES/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+WAITING="$RESOURCES/waiting.html"
+BOOT_PID=""
+
+stop_bootstrap() {
+  if [[ -n "${BOOT_PID}" ]] && kill -0 "$BOOT_PID" 2>/dev/null; then
+    kill "$BOOT_PID" 2>/dev/null || true
+    wait "$BOOT_PID" 2>/dev/null || true
+  fi
+  BOOT_PID=""
+}
+
+start_bootstrap() {
+  if helper_ready; then
+    return 0
+  fi
+  if curl -fsS --max-time 1 "${LOCAL}/api/ping" >/dev/null 2>&1; then
+    return 0
+  fi
+  (
+    while true; do
+      {
+        printf 'HTTP/1.1 200 OK\r\n'
+        printf 'Content-Type: text/html; charset=utf-8\r\n'
+        printf 'Connection: close\r\n'
+        printf 'Access-Control-Allow-Origin: *\r\n'
+        printf '\r\n'
+        cat "$WAITING"
+      } | nc -l 127.0.0.1 "$PORT" >/dev/null 2>&1 || break
+    done
+  ) &
+  BOOT_PID="$!"
+}
+
+notify "正在打开" "第一次准备大约需要几分钟，之后打开网址就能用。"
+start_bootstrap
+open_app
+
+fail() {
+  log "ERROR: $*"
+  stop_bootstrap
+  alert "本机组件没准备好。$*"
+  exit 1
+}
+
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+ensure_uv() {
+  if [[ -x "$DATA/bin/uv" ]]; then
+    return 0
+  fi
+  if [[ -x "$RESOURCES/bin/uv" ]]; then
+    cp "$RESOURCES/bin/uv" "$DATA/bin/uv"
+    chmod +x "$DATA/bin/uv"
+    return 0
+  fi
+  local asset="uv-aarch64-apple-darwin.tar.gz"
+  [[ "$ARCH" == "x86_64" ]] && asset="uv-x86_64-apple-darwin.tar.gz"
+  local tmp="$DATA/uv.tgz"
+  log "download uv $asset"
+  if ! curl -fL --retry 3 --retry-delay 2 -o "$tmp" "https://github.com/astral-sh/uv/releases/latest/download/${asset}"; then
+    if curl -fsSL "https://astral.sh/uv/install.sh" | env UV_INSTALL_DIR="$DATA/bin" INSTALLER_NO_MODIFY_PATH=1 /bin/sh; then
+      return 0
+    fi
+    fail "没法下载运行环境。请检查网络后再打开一次「转录小工具」。"
+  fi
+  tar -xzf "$tmp" -C "$DATA/bin"
+  rm -f "$tmp"
+  if [[ ! -x "$DATA/bin/uv" ]]; then
+    find "$DATA/bin" -name uv -type f | head -1 | while read -r p; do cp "$p" "$DATA/bin/uv"; done
+  fi
+  chmod +x "$DATA/bin/uv" 2>/dev/null || fail "运行环境下载后无法使用。"
+}
+
+ensure_ffmpeg() {
+  if [[ -x "$DATA/bin/ffmpeg" && -x "$DATA/bin/ffprobe" ]]; then
+    return 0
+  fi
+  if have_cmd ffmpeg && have_cmd ffprobe; then
+    local ff fp
+    ff="$(command -v ffmpeg)"
+    fp="$(command -v ffprobe)"
+    if [[ "$ff" != "$DATA/bin/ffmpeg" ]]; then
+      log "using system ffmpeg $ff"
+      return 0
+    fi
+  fi
+  local tag="b6.1.1"
+  local ffname="ffmpeg-darwin-arm64.gz"
+  local fpname="ffprobe-darwin-arm64.gz"
+  [[ "$ARCH" == "x86_64" ]] && ffname="ffmpeg-darwin-x64.gz" && fpname="ffprobe-darwin-x64.gz"
+  log "download ffmpeg"
+  curl -fL --retry 3 --retry-delay 2 -o "$DATA/bin/ffmpeg.gz" \
+    "https://github.com/eugeneware/ffmpeg-static/releases/download/${tag}/${ffname}" \
+    || fail "没法下载音频组件。请检查网络后再打开一次。"
+  curl -fL --retry 3 --retry-delay 2 -o "$DATA/bin/ffprobe.gz" \
+    "https://github.com/eugeneware/ffmpeg-static/releases/download/${tag}/${fpname}" \
+    || fail "没法下载音频组件。请检查网络后再打开一次。"
+  gunzip -f "$DATA/bin/ffmpeg.gz" "$DATA/bin/ffprobe.gz"
+  chmod +x "$DATA/bin/ffmpeg" "$DATA/bin/ffprobe"
+}
+
+copy_bundled_app() {
+  if [[ -d "$RESOURCES/app/backend" ]]; then
+    rsync -a --delete --exclude temp --exclude .venv --exclude cookies.txt \
+      "$RESOURCES/app/" "$DATA/app/"
+    return 0
+  fi
+  return 1
+}
+
+refresh_app() {
+  local zip="$DATA/src.zip"
+  local tmp="$DATA/src-unpack"
+  log "refresh app from GitHub"
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+  if curl -fL --retry 3 --retry-delay 2 -o "$zip" \
+    "https://api.github.com/repos/${REPO}/zipball/main"; then
+    unzip -q -o "$zip" -d "$tmp" || true
+    local inner
+    inner="$(find "$tmp" -maxdepth 1 -mindepth 1 -type d | head -1)"
+    if [[ -n "$inner" && -d "$inner/backend" ]]; then
+      rsync -a --delete --exclude temp --exclude .venv --exclude cookies.txt \
+        "$inner/" "$DATA/app/"
+      rm -rf "$tmp" "$zip"
+      return 0
+    fi
+  fi
+  rm -rf "$tmp" "$zip"
+  if [[ -d "$DATA/app/backend" ]]; then
+    log "keep existing app copy"
+    return 0
+  fi
+  if copy_bundled_app; then
+    log "using bundled app"
+    return 0
+  fi
+  fail "没法下载程序文件。请检查网络后再打开一次。"
+}
+
+ensure_venv() {
+  local uv="$DATA/bin/uv"
+  if [[ ! -x "$DATA/venv/bin/python" ]]; then
+    log "create venv"
+    if ! "$uv" python install 3.12; then
+      if /usr/bin/python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+        log "fallback system python3"
+        "$uv" venv "$DATA/venv" --python /usr/bin/python3 || fail "没法创建运行环境。"
+      else
+        fail "没法安装 Python。请检查网络后再打开一次。"
+      fi
+    else
+      "$uv" venv "$DATA/venv" --python 3.12 || fail "没法创建运行环境。"
+    fi
+  fi
+  log "install python packages"
+  "$uv" pip install --python "$DATA/venv/bin/python" -r "$DATA/app/requirements.txt" \
+    || fail "没法安装依赖。请检查网络后再打开一次。"
+}
+
+start_server() {
+  stop_bootstrap
+  if helper_ready; then
+    return 0
+  fi
+  if [[ -f "$PIDFILE" ]]; then
+    local old
+    old="$(cat "$PIDFILE" 2>/dev/null || true)"
+    if [[ -n "$old" ]] && kill -0 "$old" 2>/dev/null; then
+      log "waiting for pid $old"
+    else
+      rm -f "$PIDFILE"
+    fi
+  fi
+  log "start server"
+  cd "$DATA/app"
+  nohup "$DATA/venv/bin/python" start.py --prod >>"$LOG" 2>&1 &
+  echo $! >"$PIDFILE"
+}
+
+wait_ready() {
+  local i
+  for i in $(seq 1 90); do
+    if helper_ready; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
+}
+
+log "launch begin arch=$ARCH"
+ensure_uv
+refresh_app
+ensure_venv
+ensure_ffmpeg
+start_server
+wait_ready
+notify "已经准备好" "可以开始把链接转成逐字稿了。"
+open_app
+log "launch ok"
+exit 0
