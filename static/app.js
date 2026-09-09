@@ -981,23 +981,27 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   try {
-    const share = new URLSearchParams(location.search).get("url");
+    const params = new URLSearchParams(location.search);
+    const share = params.get("url");
+    const go = params.get("go") === "1";
     if (share && !$("urlInput").value) {
       $("urlInput").value = share;
       syncUrlClear();
     }
-  } catch (_) {}
-
-  try {
-    fetch("/api/tasks").then((r) => r.json()).then((data) => {
-      const running = (data.tasks || []).find((t) =>
-        t.status === "running" || t.status === "queued" || t.status === "needs_login"
-      );
-      if (running) {
-        applyTask(running);
-        if (running.status === "running" || running.status === "queued") startSSE(running.id);
-      }
-    }).catch(() => {});
+    if (share && go) {
+      history.replaceState({}, "", "/");
+      $("mainCard").requestSubmit();
+    } else {
+      fetch("/api/tasks").then((r) => r.json()).then((data) => {
+        const running = (data.tasks || []).find((t) =>
+          t.status === "running" || t.status === "queued" || t.status === "needs_login"
+        );
+        if (running) {
+          applyTask(running);
+          if (running.status === "running" || running.status === "queued") startSSE(running.id);
+        }
+      }).catch(() => {});
+    }
   } catch (_) {}
 });
 

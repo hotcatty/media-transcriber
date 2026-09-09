@@ -116,7 +116,14 @@ def pipeline_steps(task: Task) -> list:
             ("finalize", "整理文稿"),
         ]
     if show_model:
-        defs = [("model", "下载turbo模型")] + defs
+        new_defs = []
+        inserted = False
+        for item in defs:
+            new_defs.append(item)
+            if item[0] in ("parse", "prepare") and not inserted:
+                new_defs.append(("model", "下载turbo模型"))
+                inserted = True
+        defs = new_defs if inserted else [("model", "下载turbo模型")] + defs
     ids = [d[0] for d in defs]
 
     def cursor() -> int:
@@ -791,12 +798,6 @@ class JobManager:
         if hint:
             raise RuntimeError(hint)
 
-        await self._ensure_model(task_id, cancel)
-        if cancel.is_set():
-            raise Cancelled()
-        task = self.store.get(task_id)
-        assert task is not None
-
         segments: Optional[List[Segment]] = None
         origin = "whisper"
         language = task.language
@@ -832,6 +833,9 @@ class JobManager:
                 duration = info.duration or duration
                 if duration:
                     self.store.update(task_id, duration=duration, title=title, flush=True)
+                await self._ensure_model(task_id, cancel)
+                if cancel.is_set():
+                    raise Cancelled()
                 self._freeze_budget(task_id, duration)
                 dl_guess = eta.prior_download(duration, "podcast")
                 dest = config.AUDIO_DIR / f"{task_id}.m4a"
@@ -883,6 +887,9 @@ class JobManager:
                             title=title, duration=duration,
                         )
                         raise RuntimeError(CHARGE_NEED_LOGIN_HINT)
+                    await self._ensure_model(task_id, cancel)
+                    if cancel.is_set():
+                        raise Cancelled()
                     self._freeze_budget(task_id, duration)
                     loop = asyncio.get_running_loop()
                     last = [0.0]
@@ -959,6 +966,9 @@ class JobManager:
         if segments is None:
             if audio_path is None or not audio_path.exists():
                 raise RuntimeError("没有可转录的音频")
+            await self._ensure_model(task_id, cancel)
+            if cancel.is_set():
+                raise Cancelled()
             if duration is None:
                 try:
                     duration = await asyncio.to_thread(audio_utils.probe_duration, audio_path)

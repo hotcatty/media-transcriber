@@ -33,7 +33,10 @@
 
   function goLocal() {
     const q = document.getElementById("urlInput").value.trim();
-    location.replace(q ? LOCAL + "/?url=" + encodeURIComponent(q) : LOCAL);
+    const next = q
+      ? LOCAL + "/?url=" + encodeURIComponent(q) + "&go=1"
+      : LOCAL;
+    location.replace(next);
   }
 
   function openHelper() {
@@ -89,8 +92,4 @@
   historyBtn.addEventListener("click", function () {
     enter();
   });
-
-  (async function boot() {
-    if (await probe()) goLocal();
-  })();
 })();
