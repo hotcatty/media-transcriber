@@ -18,8 +18,7 @@ const $ = (id) => document.getElementById(id);
 function formatRemain(seconds) {
   if (seconds == null || Number.isNaN(Number(seconds))) return "";
   const s = Math.max(0, Math.round(Number(seconds)));
-  if (s < 8) return "即将完成";
-  if (s < 90) return `剩余约${s}s`;
+  if (s < 90) return `剩余约${Math.max(1, s)}s`;
   return `剩余约${Math.max(1, Math.round(s / 60))}分钟`;
 }
 
@@ -44,7 +43,19 @@ function liveRemain(task) {
     if (cur.eta_at) remain -= Date.now() / 1000 - Number(cur.eta_at);
     remain = Math.max(0, remain);
   }
+  if (cur.id === "transcribe") {
+    const detail = (task && task.detail) || {};
+    const dur = Number(task.duration || detail.total_seconds || 0);
+    const processed = Number(detail.processed_seconds || 0);
+    const speed = Number(task.speed_x || detail.speed_x || 0);
+    if (dur > 0 && speed > 0.1) {
+      let computed = Math.max(0, (dur - processed) / speed);
+      if (detail.eta_at) computed = Math.max(0, computed - (Date.now() / 1000 - Number(detail.eta_at)));
+      if (remain == null || remain < 8 || computed > remain + 8) remain = computed;
+    }
+  }
   if (remain == null || !task || !task.id) return remain;
+  if (cur.id === "model" || cur.id === "transcribe") return remain;
   if (remainFloor.id !== task.id) {
     remainFloor = { id: task.id, value: remain };
     return remain;
@@ -394,7 +405,7 @@ function renderJob(task) {
         extra = `<span class="step-extra">${size ? `<span class="step-hint">${escapeHtml(size)}</span>` : ""}<span class="step-hint step-hint--eta">${escapeHtml(hint)}</span></span>`;
       } else if (s.state === "current") {
         const remain = liveRemain(task);
-        const countdown = remain != null ? formatRemain(remain) : (s.eta || s.hint || "即将完成");
+        const countdown = remain != null ? formatRemain(remain) : (s.eta || s.hint || "剩余约1s");
         extra = `<span class="step-extra"><span class="step-hint">${escapeHtml(countdown)}</span></span>`;
       } else if (s.state === "done" && s.hint) {
         extra = `<span class="step-hint">${escapeHtml(s.hint)}</span>`;

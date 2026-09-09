@@ -222,7 +222,10 @@ def _prior_remain(task: Task) -> float:
     processed = detail.get("processed_seconds") or 0
     speed = detail.get("speed_x")
     if stage == "downloading_model":
-        return eta.prior_model()
+        return eta.prior_model(
+            int(detail.get("total_bytes") or 0) or None,
+            int(detail.get("downloaded_bytes") or 0),
+        )
     if stage in ("downloading", "converting"):
         return eta.prior_download(duration, _download_kind(task))
     if stage in ("transcribing", "planning"):
@@ -288,11 +291,24 @@ def _format_total_wait(seconds: Optional[float]) -> str:
     return f"预计总用时{span}，伸伸懒腰，请稍等"
 
 
+def _step_remain(task: Task) -> float:
+    """Countdown for the open step, from that step's own sample."""
+    now = time.time()
+    measured = eta.remain_from_detail(task.detail, now)
+    computed = _prior_remain(task)
+    if (task.stage or "") in ("transcribing", "planning", "downloading_model"):
+        if computed and (measured is None or measured < 8 or computed > measured + 8):
+            return float(computed)
+    if measured is not None:
+        return measured
+    return computed
+
+
 def _attach_step_progress(task: Task, steps: list) -> list:
     """Attach countdown copy to the current pipeline step. No graphical bar."""
     current = next((s for s in steps if s.get("state") == "current"), None)
     if current:
-        remain = _live_remain(task)
+        remain = _step_remain(task)
         stamped = eta.stamp(remain)
         current["eta_seconds"] = stamped["eta_seconds"]
         current["eta_at"] = stamped["eta_at"]
@@ -606,7 +622,7 @@ class JobManager:
         self.store.update(task_id, flush=True, **extra)
 
     def _blend_eta(self, task_id: str, measured: Optional[float]) -> float:
-        """Job remaining: stage sample + later steps, capped, never increases."""
+        """Current-step remaining. Whole-job budget is only for 预计总用时."""
         self._freeze_budget(task_id)
         task = self.store.get(task_id)
         now = time.time()
@@ -617,12 +633,12 @@ class JobManager:
         if task and (task.detail or {}).get("eta_budget") is not None:
             trailing = _trailing_remain(task)
         measured_job = None if measured is None else max(0.0, float(measured) + trailing)
-        blended = eta.smooth(prev, measured_job, dt)
-        cap = eta.budget_remain(task.detail if task else None, now)
+        if measured_job is not None and prev is not None and measured_job > prev + 8:
+            blended = prev * 0.35 + measured_job * 0.65
+        else:
+            blended = eta.smooth(prev, measured_job, dt)
         if blended is None:
-            blended = cap if cap is not None else (measured_job if measured_job is not None else (prev or 0.0))
-        elif cap is not None:
-            blended = min(blended, cap)
+            blended = measured_job if measured_job is not None else (prev or 0.0)
         return float(max(0.0, blended))
 
     async def _ensure_model(self, task_id: str, cancel: threading.Event) -> None:
@@ -643,6 +659,8 @@ class JobManager:
         started = time.time()
         loop = asyncio.get_running_loop()
         last = [0.0]
+        # Resume/cache already on disk must not count as this-session throughput.
+        sample = {"base_done": None, "base_at": None}
 
         def report(filename: str, done: int, total: int) -> None:
             if cancel.is_set():
@@ -651,10 +669,17 @@ class JobManager:
             if now - last[0] < 0.35 and total and done < total:
                 return
             last[0] = now
-            elapsed = max(now - started, 0.4)
-            measured = eta.from_bytes(done, total or 0, elapsed)
+            if sample["base_done"] is None:
+                sample["base_done"] = max(int(done or 0), 0)
+                sample["base_at"] = now
+            gained = max(0, int(done or 0) - int(sample["base_done"]))
+            window = max(now - float(sample["base_at"]), 0.0)
+            remain_span = max(int(total or 0) - int(sample["base_done"]), 0)
+            measured = None
+            if gained >= 512 * 1024 and window >= 2.0 and remain_span:
+                measured = eta.from_bytes(gained, remain_span, window)
             if measured is None:
-                measured = max(eta.prior_model() - (now - started), 0.0)
+                measured = eta.prior_model(total or None, done)
             frac = (done / total) if total else None
 
             def apply() -> None:

@@ -17,14 +17,12 @@ AAC_BYTES_PER_SEC = 8000
 
 
 def format_remain(seconds: Optional[float]) -> str:
-    """Figma copy: 剩余约30s / 剩余约5分钟 / 即将完成."""
+    """Figma 27:3188: 剩余约30s / 剩余约5分钟. Current steps always show a countdown."""
     if seconds is None:
         return ""
     s = int(round(max(0.0, float(seconds))))
-    if s < STALL_SECONDS:
-        return "即将完成"
     if s < 90:
-        return f"剩余约{s}s"
+        return f"剩余约{max(1, s)}s"
     return f"剩余约{max(1, int(round(s / 60)))}分钟"
 
 
@@ -75,8 +73,14 @@ def prior_parse() -> float:
     return 12.0
 
 
-def prior_model() -> float:
-    return 120.0
+def prior_model(total_bytes: Optional[int] = None, done_bytes: int = 0) -> float:
+    """Same from_bytes idea, with a conservative ~2.5 MB/s until we have a real sample.
+
+    120s was far too low for a 1.6 GB first fetch, and smooth() never revises up,
+    so the UI would sit on 不到1分钟 for most of the download.
+    """
+    remain = max(int(total_bytes or 1_614_000_000) - max(int(done_bytes or 0), 0), 1)
+    return max(180.0, remain / (2.5 * 1024 * 1024))
 
 
 def prior_finalize() -> float:
