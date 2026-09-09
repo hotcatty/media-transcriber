@@ -82,13 +82,13 @@ body {
   width: min(var(--card-w), calc(100% - 48px));
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 32px;
 }
 
 .card {
   background: var(--white);
   border-radius: var(--radius-card);
-  padding: 12px 12px 20px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -132,77 +132,16 @@ body {
   height: 45px;
   padding: 12px 18px;
 }
+.btn--submit:disabled { opacity: 0.6; cursor: default; }
 
-.hint {
-  font-size: 14px;
-  color: var(--ink-60);
-  padding: 0 4px;
-}
-
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--mask);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  z-index: 20;
-}
-.modal {
-  width: min(640px, 100%);
-  background: var(--white);
-  border-radius: var(--radius-card);
-  padding: 30px 40px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-.modal-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-.modal-head h2 {
+.link--on-dark {
   font-size: 16px;
-  font-weight: 600;
-}
-.icon-btn {
-  width: 24px;
-  height: 24px;
-  font-size: 22px;
-  line-height: 1;
-  opacity: 0.7;
-}
-.modal-lead {
-  font-size: 16px;
-  color: var(--ink-60);
-  line-height: 1.5;
-}
-.steps {
-  padding-left: 1.2em;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 16px;
-  line-height: 1.45;
-  color: #000;
-}
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-.link {
-  font-size: 16px;
-  color: var(--link);
+  color: var(--white-80);
+  text-align: center;
   text-decoration: underline;
 }
 
 @media (max-width: 720px) {
   .bar { flex-direction: column; gap: 12px; }
   .btn--submit { flex: none; width: 100%; }
-  .modal { padding: 24px; }
 }

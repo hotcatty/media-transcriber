@@ -56,6 +56,21 @@ from video_processor import VideoProcessor
 
 logger = logging.getLogger(__name__)
 
+FIRST_MODEL_HINT = "首次使用需要下载语音分析模型，可能需要几分钟"
+
+
+def _fmt_model_size(done: int, total: int) -> str:
+    def one(n: int) -> str:
+        n = max(int(n or 0), 0)
+        if n >= 1024 ** 3:
+            g = n / (1024 ** 3)
+            return f"{g:.1f}G".replace(".0G", "G")
+        return f"{n / (1024 ** 2):.0f}M"
+
+    if not total:
+        return f"{one(done)} / 1.6G"
+    return f"{one(done)} / {one(total)}"
+
 
 def _has_audio_file(task: Task) -> bool:
     if task.origin == "subtitle":
@@ -182,6 +197,13 @@ def pipeline_steps(task: Task) -> list:
                 if is_charge_gated(task.error or task.message or "")
                 else LOGIN_PARSE_HINT
             )
+        elif sid == "model" and state == "current":
+            d = task.detail or {}
+            item["size"] = _fmt_model_size(
+                int(d.get("downloaded_bytes") or 0),
+                int(d.get("total_bytes") or 0),
+            )
+            item["hint"] = FIRST_MODEL_HINT
         out.append(item)
     return out
 

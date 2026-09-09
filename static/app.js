@@ -370,6 +370,10 @@ function renderJob(task) {
         extra = reason ? `<span class="step-hint">${escapeHtml(reason)}</span>` : "";
       } else if (s.action === "view_audio") {
         extra = `<button type="button" class="link" data-reveal-audio="1">${escapeHtml(s.action_label || "查看音频")}</button>`;
+      } else if (s.state === "current" && s.id === "model") {
+        const size = s.size || "";
+        const hint = s.hint || "首次使用需要下载语音分析模型，可能需要几分钟";
+        extra = `<span class="step-extra">${size ? `<span class="step-hint">${escapeHtml(size)}</span>` : ""}<span class="step-hint">${escapeHtml(hint)}</span></span>`;
       } else if (s.state === "current") {
         const remain = liveRemain(task);
         const countdown = remain != null ? formatRemain(remain) : (s.eta || s.hint || "即将完成");
@@ -379,7 +383,8 @@ function renderJob(task) {
       }
       const tight = s.action === "view_audio";
       const meta = extra && tight ? " has-meta" : "";
-      return `<li class="step ${s.state}${meta}"><span class="step-main">${stepIcon(s.state)}<span class="step-label">${escapeHtml(s.label)}</span></span>${extra}</li>`;
+      const kind = s.id === "model" ? " step--model" : "";
+      return `<li class="step ${s.state}${kind}${meta}"><span class="step-main">${stepIcon(s.state)}<span class="step-label">${escapeHtml(s.label)}</span></span>${extra}</li>`;
     }).join("")}</ul>`;
   }
 
@@ -974,6 +979,14 @@ document.addEventListener("DOMContentLoaded", () => {
       await openHistoryItem(open.getAttribute("data-open"));
     }
   });
+
+  try {
+    const share = new URLSearchParams(location.search).get("url");
+    if (share && !$("urlInput").value) {
+      $("urlInput").value = share;
+      syncUrlClear();
+    }
+  } catch (_) {}
 
   try {
     fetch("/api/tasks").then((r) => r.json()).then((data) => {

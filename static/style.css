@@ -271,6 +271,7 @@ img.step-ico.is-spin {
   width: max-content;
   max-width: 100%;
 }
+.step.step--model.current { gap: 24px; }
 .step-main {
   display: flex;
   align-items: center;
