@@ -32,6 +32,7 @@ DEFAULTS: Dict[str, Any] = {
     "paragraph_min_chars": 120,
     "paragraph_max_chars": 300,
     "whisper_speed_x": None,    # measured local realtime multiple; None → config default
+    "whisper_speed_model": "",  # which model that measurement belongs to
 }
 
 _lock = threading.Lock()
@@ -69,8 +70,19 @@ def get(key: str, default: Any = None) -> Any:
     return get_all().get(key, DEFAULTS.get(key, default))
 
 
+def _active_model() -> str:
+    chosen = (get("model") or "").strip()
+    if chosen:
+        return chosen
+    if config.IS_APPLE_SILICON:
+        return config.MLX_MODEL
+    return config.FASTER_WHISPER_MODEL
+
+
 def whisper_speed() -> float:
     """Realtime multiple for ETA: this machine's last runs, else platform default."""
+    if str(get("whisper_speed_model") or "") != _active_model():
+        return config.WHISPER_SPEED_X
     raw = get("whisper_speed_x")
     try:
         v = float(raw)
@@ -89,7 +101,8 @@ def remember_whisper_speed(measured: float) -> None:
         return
     if m < 1.5 or m > 25:
         return
-    prev = get("whisper_speed_x")
+    model = _active_model()
+    prev = get("whisper_speed_x") if str(get("whisper_speed_model") or "") == model else None
     try:
         p = float(prev)
     except (TypeError, ValueError):
@@ -98,8 +111,8 @@ def remember_whisper_speed(measured: float) -> None:
         blended = 0.45 * p + 0.55 * m
     else:
         blended = m * 0.92
-    update({"whisper_speed_x": round(blended, 2)})
-    logger.info("本机转写速度记为 %.2f×（本趟 %.2f×）", blended, m)
+    update({"whisper_speed_x": round(blended, 2), "whisper_speed_model": model})
+    logger.info("本机转写速度记为 %.2f×（本趟 %.2f×，%s）", blended, m, model)
 
 
 def update(values: Dict[str, Any]) -> Dict[str, Any]:
