@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=local-service">
-  <link rel="stylesheet" href="/static/style.css?v=local-service">
+  <link rel="stylesheet" href="/static/ui.css?v=service-guide">
+  <link rel="stylesheet" href="/static/style.css?v=service-guide">
 </head>
 <body>
   <div class="stage">
@@ -146,10 +146,37 @@
     </div>
   </div>
 
+  <div class="overlay" id="serviceOverlay" hidden>
+    <div class="modal" role="dialog" aria-labelledby="serviceTitle">
+      <div class="modal-head">
+        <h2 id="serviceTitle">下载并打开本机服务</h2>
+        <button type="button" class="icon-btn" id="serviceClose" aria-label="关闭">
+          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+        </button>
+      </div>
+      <p class="modal-lead">
+        第一次需要在这台电脑上打开一次本机服务。系统会提示无法验证，这是正常的。按下面做就能打开，不要点「移到废纸篓」。
+      </p>
+      <ol class="service-steps">
+        <li>点下面的「下载本机服务」，浏览器会下一个压缩包。</li>
+        <li>打开「下载」文件夹，双击压缩包解压，再打开里面的「转录小工具」。</li>
+        <li>如果弹出「未打开」：点左边灰色的「完成」，不要点蓝色的「移到废纸篓」。</li>
+        <li>打开左上角苹果菜单 → 系统设置 → 隐私与安全性，拉到最下面的「安全性」。</li>
+        <li>看到已阻止「转录小工具」，点「仍要打开」，再确认一次「打开」。</li>
+        <li>回到这一页，粘贴链接，点「转录为逐字稿」。</li>
+      </ol>
+      <p class="service-alt">也可以按住 Control 点「转录小工具」，选「打开」。如果还是同一句提示，就用上面的系统设置。</p>
+      <div class="service-actions">
+        <button type="button" class="btn btn--solid" id="serviceDownloadBtn">下载本机服务</button>
+        <p class="service-status" id="serviceStatus" hidden></p>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=local-service"></script>
-  <script src="/static/ui.js?v=local-service"></script>
-  <script src="/static/app.js?v=local-service"></script>
+  <script src="/static/config.js?v=service-guide"></script>
+  <script src="/static/ui.js?v=service-guide"></script>
+  <script src="/static/app.js?v=service-guide"></script>
 </body>
 </html>

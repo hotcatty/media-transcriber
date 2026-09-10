@@ -387,6 +387,37 @@ img.step-ico.is-spin {
   gap: 4px;
   line-height: 1.4;
 }
+.service-steps {
+  margin: 0;
+  padding-left: 1.3em;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 16px;
+  line-height: 1.45;
+  color: #000;
+}
+.service-alt {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-60);
+}
+.service-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.service-status {
+  margin: 0;
+  font-size: 14px;
+  color: #1a7f4b;
+}
+#serviceOverlay .modal {
+  overflow-y: auto;
+  gap: 20px;
+}
 .info-pop {
   margin-top: -16px;
   padding: 12px 14px;
