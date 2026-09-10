@@ -74,15 +74,14 @@ def _active_model() -> str:
     chosen = (get("model") or "").strip()
     if chosen:
         return chosen
-    if config.IS_APPLE_SILICON:
-        return config.MLX_MODEL
-    return config.FASTER_WHISPER_MODEL
+    import engines
+    return engines.default_model()
 
 
 def whisper_speed() -> float:
     """Realtime multiple for ETA: this machine's last runs, else platform default."""
     if str(get("whisper_speed_model") or "") != _active_model():
-        return config.WHISPER_SPEED_X
+        return config.default_whisper_speed()
     raw = get("whisper_speed_x")
     try:
         v = float(raw)
@@ -90,7 +89,7 @@ def whisper_speed() -> float:
         v = 0.0
     if 1.5 <= v <= 25:
         return v
-    return config.WHISPER_SPEED_X
+    return config.default_whisper_speed()
 
 
 def remember_whisper_speed(measured: float) -> None:

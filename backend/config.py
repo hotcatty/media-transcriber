@@ -74,11 +74,13 @@ IS_APPLE_SILICON = platform.system() == "Darwin" and platform.machine() == "arm6
 ENGINE = os.getenv("MT_ENGINE", "auto").lower()
 
 # Default models per backend. Apple Silicon uses MLX large-v3-turbo (~10×).
-# Intel/Windows CPU cannot run MLX; large-v3 is ~2× (half an hour for an
-# 80-minute show). `small` is the CPU default so wall time stays near 10×.
-# `base` was measured to produce unusable Chinese (审美→神媒, 认知→任志).
+# Windows/Linux with NVIDIA CUDA uses the same-class faster-whisper turbo.
+# CPU-only machines (Intel Mac, Windows without a usable GPU) use `small`
+# so an 80-minute show stays near 8–10 minutes. `base` was unusable Chinese.
 MLX_MODEL = os.getenv("MT_MLX_MODEL", "mlx-community/whisper-large-v3-turbo")
-FASTER_WHISPER_MODEL = os.getenv("MT_FW_MODEL", "small")
+FW_MODEL_GPU = os.getenv("MT_FW_MODEL_GPU", "large-v3-turbo")
+FW_MODEL_CPU = os.getenv("MT_FW_MODEL_CPU", "small")
+FASTER_WHISPER_MODEL = os.getenv("MT_FW_MODEL", "")
 
 # Chunking: long audio is split on silence so we can report real progress,
 # support resume, and keep memory bounded.
@@ -87,11 +89,24 @@ CHUNK_SEARCH_WINDOW = float(os.getenv("MT_CHUNK_SEARCH", "60"))      # ±60 s fo
 MIN_CHUNK_SECONDS = float(os.getenv("MT_MIN_CHUNK_SECONDS", "120"))
 
 # Wall-clock speed vs audio length. MLX turbo on Apple GPU is ~9–12×.
-# faster-whisper `small` on CPU is the Intel/Windows target (~10×).
-WHISPER_SPEED_X = float(
-    os.getenv("MT_WHISPER_SPEED_X")
-    or ("9.5" if IS_APPLE_SILICON else "10")
-)
+# CUDA turbo is similar or faster. CPU `small` is the 10× target.
+def default_whisper_speed() -> float:
+    env = os.getenv("MT_WHISPER_SPEED_X")
+    if env:
+        return float(env)
+    if IS_APPLE_SILICON:
+        return 9.5
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() > 0:
+            return 12.0
+    except Exception:
+        pass
+    return 10.0
+
+
+WHISPER_SPEED_X = default_whisper_speed()
 
 WORD_TIMESTAMPS = os.getenv("MT_WORD_TIMESTAMPS", "1") not in ("0", "false", "False")
 CONDITION_ON_PREVIOUS_TEXT = os.getenv("MT_CONDITION_ON_PREV", "0") not in (

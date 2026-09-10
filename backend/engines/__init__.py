@@ -40,16 +40,45 @@ MLX_CHOICES = [
      "size_mb": 484, "note": "仅适合预览，中文错字较多"},
 ]
 
-FW_CHOICES = [
+FW_CHOICES_GPU = [
+    {"id": "large-v3-turbo", "label": "large-v3-turbo（推荐）", "size_mb": 1620,
+     "note": "有独显时和 Mac 上理想模型同一档"},
+    {"id": "large-v3", "label": "large-v3（最准）", "size_mb": 3090,
+     "note": "更准，会慢一些"},
+    {"id": "medium", "label": "medium", "size_mb": 1530, "note": "更快，中文略差"},
+    {"id": "small", "label": "small", "size_mb": 484, "note": "最快，中文错字较多"},
+]
+
+FW_CHOICES_CPU = [
     {"id": "small", "label": "small（推荐）", "size_mb": 484,
-     "note": "CPU 上大约 10 倍速，中文会有错字"},
+     "note": "没有独显时大约 10 倍速，中文会有错字"},
     {"id": "medium", "label": "medium", "size_mb": 1530,
      "note": "更准，CPU 上大约慢一倍"},
     {"id": "large-v3-turbo", "label": "large-v3-turbo", "size_mb": 1620,
-     "note": "更准，Intel CPU 上往往要二三十分钟"},
+     "note": "更准，Intel / 无独显时往往要二三十分钟"},
     {"id": "large-v3", "label": "large-v3（最准）", "size_mb": 3090,
      "note": "CPU 上很慢，不适合本机先听为快"},
 ]
+
+
+def default_fw_model() -> str:
+    if config.FASTER_WHISPER_MODEL:
+        return config.FASTER_WHISPER_MODEL
+    if fw_engine.has_cuda():
+        return config.FW_MODEL_GPU
+    return config.FW_MODEL_CPU
+
+
+def default_model(backend: Optional[str] = None) -> str:
+    backend = backend or local_backend()
+    return config.MLX_MODEL if backend == "mlx" else default_fw_model()
+
+
+def available_models(backend: Optional[str] = None) -> List[dict]:
+    backend = backend or local_backend()
+    if backend == "mlx":
+        return MLX_CHOICES
+    return FW_CHOICES_GPU if fw_engine.has_cuda() else FW_CHOICES_CPU
 
 
 def local_backend() -> str:
@@ -76,16 +105,6 @@ def local_backend() -> str:
     if mlx_engine.is_available():
         return "mlx"
     raise RuntimeError("未安装任何本地转录引擎。请执行：pip install -r requirements.txt")
-
-
-def default_model(backend: Optional[str] = None) -> str:
-    backend = backend or local_backend()
-    return config.MLX_MODEL if backend == "mlx" else config.FASTER_WHISPER_MODEL
-
-
-def available_models(backend: Optional[str] = None) -> List[dict]:
-    backend = backend or local_backend()
-    return MLX_CHOICES if backend == "mlx" else FW_CHOICES
 
 
 def get_local_engine(model: Optional[str] = None,
@@ -136,6 +155,7 @@ def describe() -> dict:
     """Backend summary for the UI and /api/health."""
     info: dict = {
         "apple_silicon": config.IS_APPLE_SILICON,
+        "cuda": fw_engine.has_cuda(),
         "mlx_installed": mlx_engine.is_available(),
         "faster_whisper_installed": fw_engine.is_available(),
         "cloud_providers": [

@@ -34,14 +34,18 @@ def is_available() -> bool:
         return False
 
 
-def _pick_device() -> tuple[str, str]:
+def has_cuda() -> bool:
     try:
         import ctranslate2
 
-        if ctranslate2.get_cuda_device_count() > 0:
-            return "cuda", "float16"
+        return ctranslate2.get_cuda_device_count() > 0
     except Exception:
-        pass
+        return False
+
+
+def _pick_device() -> tuple[str, str]:
+    if has_cuda():
+        return "cuda", "float16"
     return "cpu", "int8"
 
 
