@@ -116,12 +116,12 @@ Register-Protocol
 
 function Ensure-Uv {
     $dest = Join-Path $Data "bin\uv.exe"
-    if (Test-Path $dest) { return }
     $bundled = Join-Path $Root "bin\uv.exe"
     if (Test-Path $bundled) {
         Copy-Item $bundled $dest -Force
         return
     }
+    if (Test-Path $dest) { return }
     $zip = Join-Path $Data "uv.zip"
     $ok = GitHub-Fetch $zip "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
     if (-not $ok) { Fail "没法下载运行环境。请检查网络后再打开一次。" }
@@ -206,22 +206,46 @@ function Refresh-App {
     Fail "没法下载程序文件。请检查网络后再打开一次。"
 }
 
+function Find-BundledPython {
+    $root = Join-Path $Root "python"
+    if (-not (Test-Path $root)) { return $null }
+    $found = Get-ChildItem $root -Recurse -Filter python.exe -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\Lib\\' -and $_.FullName -notmatch '\\Scripts\\' } |
+        Select-Object -First 1
+    if ($found) { return $found.FullName }
+    return $null
+}
+
 function Ensure-Venv {
     $uv = Join-Path $Data "bin\uv.exe"
     $py = Join-Path $Data "venv\Scripts\python.exe"
+    if ((Test-Path (Join-Path $Data "venv")) -and -not (Test-Path $py)) {
+        Remove-Item (Join-Path $Data "venv") -Recurse -Force -ErrorAction SilentlyContinue
+    }
     if (-not (Test-Path $py)) {
         Write-Log "create venv"
-        $ok = $false
-        foreach ($ver in @("3.12", "3.11")) {
-            & $uv python install $ver
-            if ($LASTEXITCODE -ne 0) { continue }
-            & $uv venv (Join-Path $Data "venv") --python $ver
-            if ($LASTEXITCODE -eq 0 -and (Test-Path $py)) {
-                $ok = $true
-                break
+        $bundledPy = Find-BundledPython
+        if ($bundledPy) {
+            Write-Log "using bundled python $bundledPy"
+            & $uv venv (Join-Path $Data "venv") --python $bundledPy
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $py)) {
+                & $bundledPy -m venv (Join-Path $Data "venv")
             }
+            if (-not (Test-Path $py)) { Fail "没法创建运行环境。" }
+        } else {
+            Write-Log "no bundled python, try uv install"
+            $ok = $false
+            foreach ($ver in @("3.12", "3.11")) {
+                & $uv python install $ver
+                if ($LASTEXITCODE -ne 0) { continue }
+                & $uv venv (Join-Path $Data "venv") --python $ver
+                if ($LASTEXITCODE -eq 0 -and (Test-Path $py)) {
+                    $ok = $true
+                    break
+                }
+            }
+            if (-not $ok) { Fail "没法准备 Python。请删掉旧文件后重新下载再打开。" }
         }
-        if (-not $ok) { Fail "没法安装 Python。请检查网络后再打开一次。" }
     }
     Write-Log "install python packages"
     & $uv pip install --python $py -r (Join-Path $Data "app\requirements.txt")

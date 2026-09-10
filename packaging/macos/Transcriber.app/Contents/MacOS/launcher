@@ -186,17 +186,37 @@ github_fetch() {
 
 usable_python() {
   local p="$1"
-  [[ -x "$p" ]] || return 1
+  [[ -n "$p" && -f "$p" ]] || return 1
+  chmod +x "$p" 2>/dev/null || true
   "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null
 }
 
+find_bundled_python() {
+  local root p prefix
+  for root in "$RESOURCES/python" "$DATA/python"; do
+    [[ -d "$root" ]] || continue
+    xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
+    p="$(find "$root" -path '*/bin/python3.12' -type f 2>/dev/null | head -1)"
+    [[ -n "$p" ]] || p="$(find "$root" -path '*/bin/python3' -type f 2>/dev/null | head -1)"
+    [[ -n "$p" ]] || continue
+    prefix="$(cd "$(dirname "$p")/.." && pwd)"
+    chmod -R u+x "$prefix/bin" 2>/dev/null || true
+    if usable_python "$p"; then
+      printf '%s' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ensure_uv() {
-  if [[ -x "$DATA/bin/uv" ]]; then
-    return 0
-  fi
   if [[ -x "$RESOURCES/bin/uv" ]]; then
     cp "$RESOURCES/bin/uv" "$DATA/bin/uv"
     chmod +x "$DATA/bin/uv"
+    xattr -dr com.apple.quarantine "$DATA/bin/uv" 2>/dev/null || true
+    return 0
+  fi
+  if [[ -x "$DATA/bin/uv" ]]; then
     return 0
   fi
   local asset="uv-aarch64-apple-darwin.tar.gz"
@@ -298,32 +318,51 @@ refresh_app() {
 
 ensure_venv() {
   local uv="$DATA/bin/uv"
+  if [[ -x "$DATA/venv/bin/python" ]] && ! "$DATA/venv/bin/python" -c 'import sys' 2>/dev/null; then
+    log "drop unusable venv"
+    rm -rf "$DATA/venv"
+  fi
+  if [[ -d "$DATA/venv" && ! -x "$DATA/venv/bin/python" ]]; then
+    log "drop broken venv"
+    rm -rf "$DATA/venv"
+  fi
   if [[ ! -x "$DATA/venv/bin/python" ]]; then
-    log "create venv mirror=$UV_PYTHON_INSTALL_MIRROR dir=$UV_PYTHON_INSTALL_DIR"
-    local ok=0
-    local ver
-    for ver in 3.12 3.11; do
-      if "$uv" python install "$ver"; then
-        if "$uv" venv "$DATA/venv" --python "$ver"; then
-          ok=1
-          break
+    log "create venv"
+    local py=""
+    py="$(find_bundled_python || true)"
+    if [[ -n "$py" ]]; then
+      log "using bundled python $py"
+      if ! "$uv" venv "$DATA/venv" --python "$py"; then
+        log "uv venv failed, try python -m venv"
+        "$py" -m venv "$DATA/venv" || fail "没法创建运行环境。"
+      fi
+    else
+      log "no bundled python, try uv install mirror=$UV_PYTHON_INSTALL_MIRROR dir=$UV_PYTHON_INSTALL_DIR"
+      local ok=0
+      local ver
+      for ver in 3.12 3.11; do
+        if "$uv" python install "$ver"; then
+          if "$uv" venv "$DATA/venv" --python "$ver"; then
+            ok=1
+            break
+          fi
+        else
+          log "uv python install $ver failed"
         fi
-      else
-        log "uv python install $ver failed"
-      fi
-    done
-    if [[ "$ok" -ne 1 ]]; then
-      local syspy=""
-      if usable_python /usr/bin/python3; then
-        syspy="/usr/bin/python3"
-      elif have_cmd python3 && usable_python "$(command -v python3)"; then
-        syspy="$(command -v python3)"
-      fi
-      if [[ -n "$syspy" ]]; then
-        log "fallback system python $syspy"
-        "$uv" venv "$DATA/venv" --python "$syspy" || fail "没法创建运行环境。"
-      else
-        fail "没法安装 Python。请检查网络后再打开一次。"
+      done
+      if [[ "$ok" -ne 1 ]]; then
+        local syspy=""
+        if usable_python /usr/bin/python3; then
+          syspy="/usr/bin/python3"
+        elif have_cmd python3 && usable_python "$(command -v python3)"; then
+          syspy="$(command -v python3)"
+        fi
+        if [[ -n "$syspy" ]]; then
+          log "fallback system python $syspy"
+          "$uv" venv "$DATA/venv" --python "$syspy" || fail "没法创建运行环境。"
+        else
+          fail "没法准备 Python。请删掉旧的「转录小工具」，重新下载后再打开。"
+        fi
       fi
     fi
   fi
@@ -363,7 +402,7 @@ wait_ready() {
   fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
 }
 
-log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH"
+log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910c"
 ensure_uv
 refresh_app
 ensure_venv
