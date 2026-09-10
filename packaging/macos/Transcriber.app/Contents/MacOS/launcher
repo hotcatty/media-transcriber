@@ -1,7 +1,7 @@
 #!/bin/bash
 # 转录小工具 · 本机助手
 # 网页点转录或双击本程序时运行：准备环境、拉起本地服务。
-# 从 media-transcriber:// 唤起时只启动服务，不把浏览器跳到 localhost。
+# 不打开 127.0.0.1：测试从公开网页进来，准备好后回到原来的网页继续。
 set -u
 
 SCHEME_LAUNCH=0
@@ -22,7 +22,7 @@ LOCAL="http://127.0.0.1:${PORT}"
 REPO="hotcatty/media-transcriber"
 ARCH="$(uname -m)"
 
-mkdir -p "$DATA/bin" "$DATA/app" "$LOG_DIR"
+mkdir -p "$DATA/bin" "$DATA/app" "$DATA/python" "$LOG_DIR"
 exec >>"$LOG" 2>&1
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
@@ -43,20 +43,9 @@ helper_ready() {
   return 0
 }
 
-open_app() {
-  /usr/bin/open "$LOCAL"
-}
-
-maybe_open_app() {
-  if [[ "$SCHEME_LAUNCH" == 1 ]]; then
-    return 0
-  fi
-  open_app
-}
-
 if helper_ready; then
-  log "already running"
-  maybe_open_app
+  log "already running scheme=$SCHEME_LAUNCH"
+  notify "已经准备好" "回到原来的网页就能继续转录。"
   exit 0
 fi
 
@@ -70,6 +59,12 @@ export MT_FFPROBE="$DATA/bin/ffprobe"
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 export UV_INDEX_URL="${UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-https://cdn.npmmirror.com/binaries/python-build-standalone}"
+if [[ -d "$RESOURCES/python" && -n "$(find "$RESOURCES/python" -type f 2>/dev/null | head -1)" ]]; then
+  export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$RESOURCES/python}"
+else
+  export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$DATA/python}"
+fi
 export PATH="$DATA/bin:$RESOURCES/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 WAITING="$RESOURCES/waiting.html"
@@ -90,10 +85,14 @@ start_bootstrap() {
   if curl -fsS --max-time 1 "${LOCAL}/api/ping" >/dev/null 2>&1; then
     return 0
   fi
-  local py="/usr/bin/python3"
+  local py=""
   if command -v python3 >/dev/null 2>&1; then
     py="$(command -v python3)"
+  elif [[ -x /usr/bin/python3 ]]; then
+    py="/usr/bin/python3"
   fi
+  [[ -n "$py" ]] || return 0
+  "$py" -c 'import http.server' >/dev/null 2>&1 || return 0
   (
     PORT="$PORT" WAITING="$WAITING" "$py" - <<'PY'
 import os
@@ -150,7 +149,6 @@ PY
 
 notify "正在打开" "第一次准备大约需要几分钟，之后打开网址就能用。"
 start_bootstrap
-maybe_open_app
 
 fail() {
   log "ERROR: $*"
@@ -160,6 +158,37 @@ fail() {
 }
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+curl_fetch() {
+  local dest="$1"
+  shift
+  local url
+  rm -f "$dest"
+  for url in "$@"; do
+    [[ -n "$url" ]] || continue
+    log "fetch $url"
+    if curl -fL --retry 2 --retry-delay 2 --connect-timeout 20 --max-time 180 -o "$dest" "$url"; then
+      return 0
+    fi
+    rm -f "$dest"
+  done
+  return 1
+}
+
+github_fetch() {
+  local dest="$1"
+  local url="$2"
+  curl_fetch "$dest" \
+    "$url" \
+    "https://ghfast.top/${url}" \
+    "https://ghproxy.net/${url}"
+}
+
+usable_python() {
+  local p="$1"
+  [[ -x "$p" ]] || return 1
+  "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null
+}
 
 ensure_uv() {
   if [[ -x "$DATA/bin/uv" ]]; then
@@ -174,7 +203,7 @@ ensure_uv() {
   [[ "$ARCH" == "x86_64" ]] && asset="uv-x86_64-apple-darwin.tar.gz"
   local tmp="$DATA/uv.tgz"
   log "download uv $asset"
-  if ! curl -fL --retry 3 --retry-delay 2 -o "$tmp" "https://github.com/astral-sh/uv/releases/latest/download/${asset}"; then
+  if ! github_fetch "$tmp" "https://github.com/astral-sh/uv/releases/latest/download/${asset}"; then
     if curl -fsSL "https://astral.sh/uv/install.sh" | env UV_INSTALL_DIR="$DATA/bin" INSTALLER_NO_MODIFY_PATH=1 /bin/sh; then
       return 0
     fi
@@ -183,7 +212,9 @@ ensure_uv() {
   tar -xzf "$tmp" -C "$DATA/bin"
   rm -f "$tmp"
   if [[ ! -x "$DATA/bin/uv" ]]; then
-    find "$DATA/bin" -name uv -type f | head -1 | while read -r p; do cp "$p" "$DATA/bin/uv"; done
+    local found
+    found="$(find "$DATA/bin" -name uv -type f | head -1)"
+    [[ -n "$found" ]] && cp "$found" "$DATA/bin/uv"
   fi
   chmod +x "$DATA/bin/uv" 2>/dev/null || fail "运行环境下载后无法使用。"
 }
@@ -192,10 +223,15 @@ ensure_ffmpeg() {
   if [[ -x "$DATA/bin/ffmpeg" && -x "$DATA/bin/ffprobe" ]]; then
     return 0
   fi
+  if [[ -x "$RESOURCES/bin/ffmpeg" && -x "$RESOURCES/bin/ffprobe" ]]; then
+    cp "$RESOURCES/bin/ffmpeg" "$DATA/bin/ffmpeg"
+    cp "$RESOURCES/bin/ffprobe" "$DATA/bin/ffprobe"
+    chmod +x "$DATA/bin/ffmpeg" "$DATA/bin/ffprobe"
+    return 0
+  fi
   if have_cmd ffmpeg && have_cmd ffprobe; then
-    local ff fp
+    local ff
     ff="$(command -v ffmpeg)"
-    fp="$(command -v ffprobe)"
     if [[ "$ff" != "$DATA/bin/ffmpeg" ]]; then
       log "using system ffmpeg $ff"
       return 0
@@ -206,10 +242,10 @@ ensure_ffmpeg() {
   local fpname="ffprobe-darwin-arm64.gz"
   [[ "$ARCH" == "x86_64" ]] && ffname="ffmpeg-darwin-x64.gz" && fpname="ffprobe-darwin-x64.gz"
   log "download ffmpeg"
-  curl -fL --retry 3 --retry-delay 2 -o "$DATA/bin/ffmpeg.gz" \
+  github_fetch "$DATA/bin/ffmpeg.gz" \
     "https://github.com/eugeneware/ffmpeg-static/releases/download/${tag}/${ffname}" \
     || fail "没法下载音频组件。请检查网络后再打开一次。"
-  curl -fL --retry 3 --retry-delay 2 -o "$DATA/bin/ffprobe.gz" \
+  github_fetch "$DATA/bin/ffprobe.gz" \
     "https://github.com/eugeneware/ffmpeg-static/releases/download/${tag}/${fpname}" \
     || fail "没法下载音频组件。请检查网络后再打开一次。"
   gunzip -f "$DATA/bin/ffmpeg.gz" "$DATA/bin/ffprobe.gz"
@@ -226,13 +262,18 @@ copy_bundled_app() {
 }
 
 refresh_app() {
+  if [[ ! -d "$DATA/app/backend" ]]; then
+    if copy_bundled_app; then
+      log "using bundled app"
+    fi
+  fi
   local zip="$DATA/src.zip"
   local tmp="$DATA/src-unpack"
   log "refresh app from GitHub"
   rm -rf "$tmp"
   mkdir -p "$tmp"
-  if curl -fL --retry 3 --retry-delay 2 -o "$zip" \
-    "https://api.github.com/repos/${REPO}/zipball/main"; then
+  if github_fetch "$zip" "https://codeload.github.com/${REPO}/zip/refs/heads/main" \
+    || curl_fetch "$zip" "https://api.github.com/repos/${REPO}/zipball/main"; then
     unzip -q -o "$zip" -d "$tmp" || true
     local inner
     inner="$(find "$tmp" -maxdepth 1 -mindepth 1 -type d | head -1)"
@@ -258,16 +299,32 @@ refresh_app() {
 ensure_venv() {
   local uv="$DATA/bin/uv"
   if [[ ! -x "$DATA/venv/bin/python" ]]; then
-    log "create venv"
-    if ! "$uv" python install 3.12; then
-      if /usr/bin/python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-        log "fallback system python3"
-        "$uv" venv "$DATA/venv" --python /usr/bin/python3 || fail "没法创建运行环境。"
+    log "create venv mirror=$UV_PYTHON_INSTALL_MIRROR dir=$UV_PYTHON_INSTALL_DIR"
+    local ok=0
+    local ver
+    for ver in 3.12 3.11; do
+      if "$uv" python install "$ver"; then
+        if "$uv" venv "$DATA/venv" --python "$ver"; then
+          ok=1
+          break
+        fi
+      else
+        log "uv python install $ver failed"
+      fi
+    done
+    if [[ "$ok" -ne 1 ]]; then
+      local syspy=""
+      if usable_python /usr/bin/python3; then
+        syspy="/usr/bin/python3"
+      elif have_cmd python3 && usable_python "$(command -v python3)"; then
+        syspy="$(command -v python3)"
+      fi
+      if [[ -n "$syspy" ]]; then
+        log "fallback system python $syspy"
+        "$uv" venv "$DATA/venv" --python "$syspy" || fail "没法创建运行环境。"
       else
         fail "没法安装 Python。请检查网络后再打开一次。"
       fi
-    else
-      "$uv" venv "$DATA/venv" --python 3.12 || fail "没法创建运行环境。"
     fi
   fi
   log "install python packages"
@@ -306,14 +363,13 @@ wait_ready() {
   fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
 }
 
-log "launch begin arch=$ARCH"
+log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH"
 ensure_uv
 refresh_app
 ensure_venv
 ensure_ffmpeg
 start_server
 wait_ready
-notify "已经准备好" "可以开始把链接转成逐字稿了。"
-maybe_open_app
+notify "已经准备好" "回到原来的网页就能继续转录。"
 log "launch ok"
 exit 0

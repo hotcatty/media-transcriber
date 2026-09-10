@@ -403,6 +403,9 @@ img.step-ico.is-spin {
   line-height: 1.45;
   color: var(--ink-60);
 }
+#serviceOverlay [hidden] {
+  display: none !important;
+}
 .service-actions {
   display: flex;
   flex-direction: column;

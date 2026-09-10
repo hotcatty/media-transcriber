@@ -6,11 +6,12 @@
 
 https://hotcatty.github.io/media-transcriber/
 
-第一次：点「下载本机服务」，按弹窗里的步骤做。系统弹出「未打开」时点「完成」，不要点「移到废纸篓」；再到系统设置 → 隐私与安全性 → 「仍要打开」。打开后回到网页贴链接转录。
+第一次：点「下载本机服务」，按弹窗里的步骤做。
 
-之后再打开同一个网址就能用。第一次转录还会下载语音模型（步骤里是「下载turbo模型」）。
+- Mac：系统弹出「未打开」时点「完成」，不要点「移到废纸篓」；再到系统设置 → 隐私与安全性 → 「仍要打开」。
+- Windows：解压后双击 `start.bat`。一般不用过安全验证；如果弹出「Windows 已保护你的电脑」，点「更多信息」再点「仍要运行」。
 
-目前这一版先支持 Mac。
+打开后回到网页贴链接转录。之后再打开同一个网址就能用。第一次转录还会下载语音模型（步骤里是「下载turbo模型」）。
 
 ## 对本机组件会做什么
 
@@ -33,7 +34,7 @@ python start.py --prod
 
 国内默认走 HuggingFace 镜像（`HF_ENDPOINT=https://hf-mirror.com`）。
 
-Mac 助手的打包脚本：`packaging/build-macos-zip.sh`。
+本机助手打包：`packaging/build-macos-zip.sh`、`packaging/build-windows-zip.sh`。
 
 ## 登录可见 / 充电视频
 

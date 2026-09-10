@@ -15,13 +15,24 @@ let remainFloor = { id: null, value: null };
 let startGen = 0;
 
 const SERVICE_SCHEME = "media-transcriber://open";
-const SERVICE_ZIP = "https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-macOS.zip";
+const SERVICE_ZIP_MAC = "https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-macOS.zip";
+const SERVICE_ZIP_WIN = "https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-windows.zip";
 
 const $ = (id) => document.getElementById(id);
 
 function isMacDesktop() {
   const ua = navigator.userAgent || "";
   return /Mac/i.test(ua) && !/iPhone|iPad|iPod/i.test(ua);
+}
+
+function isWindowsDesktop() {
+  return /Windows|Win64|Win32/i.test(navigator.userAgent || "");
+}
+
+function servicePlatform() {
+  if (isMacDesktop()) return "mac";
+  if (isWindowsDesktop()) return "win";
+  return "other";
 }
 
 function timeoutSignal(ms) {
@@ -58,7 +69,25 @@ function startLocalService() {
   setTimeout(() => frame.remove(), 4000);
 }
 
+function paintServiceGuide() {
+  const platform = servicePlatform();
+  const show = (id, on) => {
+    const el = $(id);
+    if (el) el.hidden = !on;
+  };
+  show("serviceLeadMac", platform === "mac");
+  show("serviceLeadWin", platform === "win");
+  show("serviceLeadOther", platform === "other");
+  show("serviceGuideMac", platform === "mac");
+  show("serviceGuideWin", platform === "win");
+  show("serviceAltMac", platform === "mac");
+  show("serviceAltWin", platform === "win");
+  const btn = $("serviceDownloadBtn");
+  if (btn) btn.hidden = platform === "other";
+}
+
 function openServiceGuide() {
+  paintServiceGuide();
   const status = $("serviceStatus");
   if (status) {
     status.hidden = true;
@@ -69,16 +98,18 @@ function openServiceGuide() {
 
 function fetchServicePackage() {
   const status = $("serviceStatus");
-  if (!isMacDesktop()) {
+  const platform = servicePlatform();
+  const zip = platform === "mac" ? SERVICE_ZIP_MAC : platform === "win" ? SERVICE_ZIP_WIN : "";
+  if (!zip) {
     if (status) {
       status.hidden = false;
-      status.textContent = "目前本机服务只支持 Mac";
+      status.textContent = "目前测试包支持 Mac 和 Windows";
       status.style.color = "var(--danger)";
     }
     return false;
   }
   const a = document.createElement("a");
-  a.href = SERVICE_ZIP;
+  a.href = zip;
   a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
@@ -86,7 +117,9 @@ function fetchServicePackage() {
   if (status) {
     status.hidden = false;
     status.style.color = "#1a7f4b";
-    status.textContent = "已开始下载。解压后按弹窗里的步骤打开，不要点「移到废纸篓」。";
+    status.textContent = platform === "mac"
+      ? "已开始下载。解压后按弹窗里的步骤打开，不要点「移到废纸篓」。"
+      : "已开始下载。解压后双击 start.bat，再回到这一页。";
   }
   return true;
 }
@@ -1098,6 +1131,7 @@ document.addEventListener("DOMContentLoaded", () => {
     await loadHistory();
     openOverlay("historyOverlay");
   };
+  paintServiceGuide();
   if (window.MT_API) {
     const serviceBtn = $("serviceBtn");
     if (serviceBtn) {

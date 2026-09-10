@@ -44,6 +44,20 @@ rm -f "$UV_TGZ"
 # drop extra files from the uv tarball
 find "$APP/Contents/Resources/bin" -mindepth 1 -maxdepth 1 ! -name uv -exec rm -rf {} +
 
+# Bundle CPython so first launch does not need GitHub to install Python.
+PY_DIR="$APP/Contents/Resources/python"
+mkdir -p "$PY_DIR"
+export UV_PYTHON_INSTALL_DIR="$PY_DIR"
+export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-https://cdn.npmmirror.com/binaries/python-build-standalone}"
+echo "install python 3.12 into bundle"
+if ! "$APP/Contents/Resources/bin/uv" python install 3.12; then
+  echo "warning: could not bundle python; runtime will try the mirror" >&2
+  rm -rf "$PY_DIR"
+elif [[ -z "$(find "$PY_DIR" -type f 2>/dev/null | head -1)" ]]; then
+  echo "warning: python bundle empty; runtime will try the mirror" >&2
+  rm -rf "$PY_DIR"
+fi
+
 (
   cd "$STAGE"
   rm -f "$ZIP"

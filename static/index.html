@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=service-guide">
-  <link rel="stylesheet" href="/static/style.css?v=service-guide">
+  <link rel="stylesheet" href="/static/ui.css?v=service-guide2">
+  <link rel="stylesheet" href="/static/style.css?v=service-guide2">
 </head>
 <body>
   <div class="stage">
@@ -154,10 +154,16 @@
           <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
         </button>
       </div>
-      <p class="modal-lead">
+      <p class="modal-lead" id="serviceLeadMac">
         第一次需要在这台电脑上打开一次本机服务。系统会提示无法验证，这是正常的。按下面做就能打开，不要点「移到废纸篓」。
       </p>
-      <ol class="service-steps">
+      <p class="modal-lead" id="serviceLeadWin" hidden>
+        第一次需要在这台电脑上打开一次本机服务。下载解压后打开即可，一般不用过安全验证。
+      </p>
+      <p class="modal-lead" id="serviceLeadOther" hidden>
+        目前测试包支持 Mac 和 Windows。请用电脑打开这一页后再下载。
+      </p>
+      <ol class="service-steps" id="serviceGuideMac">
         <li>点下面的「下载本机服务」，浏览器会下一个压缩包。</li>
         <li>打开「下载」文件夹，双击压缩包解压，再打开里面的「转录小工具」。</li>
         <li>如果弹出「未打开」：点左边灰色的「完成」，不要点蓝色的「移到废纸篓」。</li>
@@ -165,7 +171,14 @@
         <li>看到已阻止「转录小工具」，点「仍要打开」，再确认一次「打开」。</li>
         <li>回到这一页，粘贴链接，点「转录为逐字稿」。</li>
       </ol>
-      <p class="service-alt">也可以按住 Control 点「转录小工具」，选「打开」。如果还是同一句提示，就用上面的系统设置。</p>
+      <ol class="service-steps" id="serviceGuideWin" hidden>
+        <li>点下面的「下载本机服务」，浏览器会下一个压缩包。</li>
+        <li>打开「下载」文件夹，解压压缩包，双击里面的 start.bat。</li>
+        <li>第一次准备大约几分钟。看到已经准备好后，回到这一页。</li>
+        <li>粘贴链接，点「转录为逐字稿」。</li>
+      </ol>
+      <p class="service-alt" id="serviceAltMac">也可以按住 Control 点「转录小工具」，选「打开」。如果还是同一句提示，就用上面的系统设置。</p>
+      <p class="service-alt" id="serviceAltWin" hidden>如果弹出「Windows 已保护你的电脑」，点「更多信息」，再点「仍要运行」。没有这句提示就不用管。</p>
       <div class="service-actions">
         <button type="button" class="btn btn--solid" id="serviceDownloadBtn">下载本机服务</button>
         <p class="service-status" id="serviceStatus" hidden></p>
@@ -175,8 +188,8 @@
 
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=service-guide"></script>
-  <script src="/static/ui.js?v=service-guide"></script>
-  <script src="/static/app.js?v=service-guide"></script>
+  <script src="/static/config.js?v=service-guide2"></script>
+  <script src="/static/ui.js?v=service-guide2"></script>
+  <script src="/static/app.js?v=service-guide2"></script>
 </body>
 </html>
