@@ -58,14 +58,21 @@ function startLocalService() {
   setTimeout(() => frame.remove(), 4000);
 }
 
+const SERVICE_OPEN_HINT = "解压后按住 Control 点「转录小工具」，选打开。然后回到这一页再点转录。";
+
 function fetchServicePackage() {
-  if (!isMacDesktop()) return;
+  if (!isMacDesktop()) {
+    showToast("目前本机服务只支持 Mac");
+    return false;
+  }
   const a = document.createElement("a");
   a.href = SERVICE_ZIP;
   a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
   a.remove();
+  showToast(SERVICE_OPEN_HINT);
+  return true;
 }
 
 function paintFirstUse(url) {
@@ -119,11 +126,10 @@ async function waitUntilReady(ms, retrigger) {
 
 async function bringServiceUp(url) {
   startGen += 1;
-  const gen = startGen;
   paintFirstUse(url);
   if (await waitUntilReady(8000, false)) return true;
-  if (gen !== startGen) return false;
-  fetchServicePackage();
+  if (!currentTask) return false;
+  showToast(SERVICE_OPEN_HINT);
   startLocalService();
   return waitUntilReady(10 * 60 * 1000, true);
 }
@@ -304,7 +310,7 @@ function showToast(text, onceKey) {
   toastTimer = setTimeout(() => {
     el.hidden = true;
     toastTimer = null;
-  }, 2400);
+  }, msg.length > 24 ? 5600 : 2400);
 }
 
 function platformOf(source) {
@@ -1076,6 +1082,13 @@ document.addEventListener("DOMContentLoaded", () => {
     await loadHistory();
     openOverlay("historyOverlay");
   };
+  if (window.MT_API) {
+    const serviceBtn = $("serviceBtn");
+    if (serviceBtn) {
+      serviceBtn.hidden = false;
+      serviceBtn.onclick = () => fetchServicePackage();
+    }
+  }
   $("historyClose").onclick = () => closeOverlay("historyOverlay");
   $("loginClose").onclick = () => closeOverlay("loginOverlay");
   $("helpClose").onclick = () => closeOverlay("helpOverlay");
@@ -1107,7 +1120,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.querySelector(".stage").addEventListener("click", (e) => {
-    if (e.target.closest(".card, #historyBtn")) return;
+    if (e.target.closest(".card, #historyBtn, #serviceBtn")) return;
     collapseJob();
   });
 

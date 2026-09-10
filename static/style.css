@@ -104,6 +104,13 @@ body {
   gap: 32px;
 }
 
+.desk-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24px;
+}
+
 /*
   BETA: while a job is open, slide the desk up to Figma 23:717 (Y=400).
   Idle stays at --desk-y: 475. To revert: CENTER_JOB_DESK = false in app.js.

@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=start-service">
-  <link rel="stylesheet" href="/static/style.css?v=start-service">
+  <link rel="stylesheet" href="/static/ui.css?v=local-service">
+  <link rel="stylesheet" href="/static/style.css?v=local-service">
 </head>
 <body>
   <div class="stage">
@@ -35,7 +35,10 @@
         </div>
         <div class="job" id="jobPanel" hidden></div>
       </form>
-      <button type="button" class="link link--on-dark" id="historyBtn">查看历史记录</button>
+      <div class="desk-links">
+        <button type="button" class="link link--on-dark" id="historyBtn">查看历史记录</button>
+        <button type="button" class="link link--on-dark" id="serviceBtn" hidden>下载本机服务</button>
+      </div>
     </div>
   </div>
 
@@ -145,8 +148,8 @@
 
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=start-service"></script>
-  <script src="/static/ui.js?v=start-service"></script>
-  <script src="/static/app.js?v=start-service"></script>
+  <script src="/static/config.js?v=local-service"></script>
+  <script src="/static/ui.js?v=local-service"></script>
+  <script src="/static/app.js?v=local-service"></script>
 </body>
 </html>
