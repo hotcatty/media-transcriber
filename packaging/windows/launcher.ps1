@@ -24,9 +24,39 @@ function Show-Alert([string]$Message) {
     [System.Windows.Forms.MessageBox]::Show($Message, "转录小工具") | Out-Null
 }
 
+function Copy-Diagnostics([string]$Message) {
+    $lines = @(
+        "转录小工具 诊断",
+        "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+        "launcher=windows-20260910e",
+        "os=$([Environment]::OSVersion.VersionString)",
+        "root=$Root",
+        "error=$Message",
+        "---- log ----"
+    )
+    if (Test-Path $Log) {
+        $lines += Get-Content $Log -Tail 160 -ErrorAction SilentlyContinue |
+            Where-Object { $_ -notmatch '(?i)cookie|authorization|token=|password' }
+    } else {
+        $lines += "(no log)"
+    }
+    $text = $lines -join "`r`n"
+    $diag = Join-Path $LogDir "media-transcriber-diag.txt"
+    Set-Content -Path $diag -Value $text -Encoding UTF8
+    try {
+        Set-Clipboard -Value $text
+    } catch { }
+}
+
 function Fail([string]$Message) {
     Write-Log "ERROR: $Message"
-    Show-Alert "本机组件没准备好。$Message"
+    Copy-Diagnostics $Message
+    Add-Type -AssemblyName System.Windows.Forms | Out-Null
+    $r = [System.Windows.Forms.MessageBox]::Show(
+        "本机组件没准备好。$Message`r`n`r`n说明已复制。回到聊天粘贴发给我即可。",
+        "转录小工具",
+        [System.Windows.Forms.MessageBoxButtons]::OK
+    )
     exit 1
 }
 
@@ -119,6 +149,7 @@ function Ensure-Uv {
     $bundled = Join-Path $Root "bin\uv.exe"
     if (Test-Path $bundled) {
         Copy-Item $bundled $dest -Force
+        Unblock-File -Path $dest -ErrorAction SilentlyContinue
         return
     }
     if (Test-Path $dest) { return }
@@ -227,6 +258,7 @@ function Ensure-Venv {
         $bundledPy = Find-BundledPython
         if ($bundledPy) {
             Write-Log "using bundled python $bundledPy"
+            Unblock-File -Path $bundledPy -ErrorAction SilentlyContinue
             & $uv venv (Join-Path $Data "venv") --python $bundledPy
             if ($LASTEXITCODE -ne 0 -or -not (Test-Path $py)) {
                 & $bundledPy -m venv (Join-Path $Data "venv")

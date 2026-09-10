@@ -49,12 +49,14 @@ PY_DIR="$APP/Contents/Resources/python"
 mkdir -p "$PY_DIR"
 export UV_PYTHON_INSTALL_DIR="$PY_DIR"
 export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-https://cdn.npmmirror.com/binaries/python-build-standalone}"
-echo "install python 3.12 into bundle"
+echo "install python 3.12 into bundle (host + both Mac archs if possible)"
 if ! "$APP/Contents/Resources/bin/uv" python install 3.12; then
-  echo "warning: could not bundle python; runtime will try the mirror" >&2
-  rm -rf "$PY_DIR"
-elif [[ -z "$(find "$PY_DIR" -type f 2>/dev/null | head -1)" ]]; then
-  echo "warning: python bundle empty; runtime will try the mirror" >&2
+  echo "warning: could not bundle host python; runtime will try download" >&2
+fi
+"$APP/Contents/Resources/bin/uv" python install cpython-3.12-macos-aarch64-none || true
+"$APP/Contents/Resources/bin/uv" python install cpython-3.12-macos-x86_64-none || true
+if [[ -z "$(find "$PY_DIR" -name python3.12 -type f 2>/dev/null | head -1)" ]]; then
+  echo "warning: python bundle empty; runtime will try download" >&2
   rm -rf "$PY_DIR"
 fi
 

@@ -11,8 +11,9 @@ for arg in "$@"; do
   esac
 done
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RESOURCES="$ROOT/Contents/Resources"
+CONTENTS="$(cd "$(dirname "$0")/.." && pwd)"
+RESOURCES="$CONTENTS/Resources"
+ROOT="$(cd "$CONTENTS/.." && pwd)"
 DATA="${HOME}/Library/Application Support/media-transcriber"
 LOG_DIR="${HOME}/Library/Logs"
 LOG="$LOG_DIR/media-transcriber.log"
@@ -150,10 +151,56 @@ PY
 notify "正在打开" "第一次准备大约需要几分钟，之后打开网址就能用。"
 start_bootstrap
 
+copy_exec() {
+  local from="$1" to="$2"
+  cp -X "$from" "$to" 2>/dev/null || cp "$from" "$to"
+  xattr -cr "$to" 2>/dev/null || true
+  chmod +x "$to"
+  /usr/bin/codesign --force --sign - --timestamp=none "$to" >/dev/null 2>&1 || true
+}
+
+build_diagnostics() {
+  printf '%s\n' "转录小工具 诊断"
+  printf '%s\n' "time=$(date '+%Y-%m-%d %H:%M:%S')"
+  printf '%s\n' "launcher=20260910e"
+  printf '%s\n' "arch=$ARCH"
+  sw_vers 2>/dev/null | sed 's/^/sw_vers /' || true
+  printf '%s\n' "root=$ROOT"
+  printf '%s\n' "resources=$RESOURCES"
+  printf '%s\n' "ls_resources=$(ls "$RESOURCES" 2>/dev/null | tr '\n' ' ')"
+  printf '%s\n' "ls_python=$(ls "$RESOURCES/python" 2>/dev/null | tr '\n' ' ')"
+  printf '%s\n' "error=$1"
+  printf '%s\n' "---- log ----"
+  if [[ -f "$LOG" ]]; then
+    grep -viE 'cookie|authorization|token=|password' "$LOG" | tail -n 160
+  else
+    printf '%s\n' "(no log)"
+  fi
+}
+
 fail() {
   log "ERROR: $*"
   stop_bootstrap
-  alert "本机组件没准备好。$*"
+  local diag_file="$LOG_DIR/media-transcriber-diag.txt"
+  build_diagnostics "$*" >"$diag_file" 2>/dev/null || true
+  /usr/bin/pbcopy <"$diag_file" 2>/dev/null || true
+  local btn
+  btn="$(/usr/bin/osascript - "本机组件没准备好。$*" <<'APPLESCRIPT' 2>/dev/null || true
+on run argv
+  set msg to item 1 of argv
+  try
+    set r to button returned of (display dialog msg & return & return & "说明已复制。回到聊天粘贴发给我即可。" with title "转录小工具" buttons {"好", "再复制一次"} default button "再复制一次")
+    return r
+  on error
+    return "好"
+  end try
+end run
+APPLESCRIPT
+)"
+  if [[ "$btn" == "再复制一次" ]]; then
+    /usr/bin/pbcopy <"$diag_file" 2>/dev/null || true
+    alert "说明已复制。回到聊天粘贴发给我即可。"
+  fi
   exit 1
 }
 
@@ -186,37 +233,99 @@ github_fetch() {
 
 usable_python() {
   local p="$1"
-  [[ -n "$p" && -f "$p" ]] || return 1
+  [[ -n "$p" && -e "$p" ]] || return 1
   chmod +x "$p" 2>/dev/null || true
   "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null
 }
 
-find_bundled_python() {
-  local root p prefix
-  for root in "$RESOURCES/python" "$DATA/python"; do
-    [[ -d "$root" ]] || continue
-    xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
-    p="$(find "$root" -path '*/bin/python3.12' -type f 2>/dev/null | head -1)"
-    [[ -n "$p" ]] || p="$(find "$root" -path '*/bin/python3' -type f 2>/dev/null | head -1)"
-    [[ -n "$p" ]] || continue
-    prefix="$(cd "$(dirname "$p")/.." && pwd)"
-    chmod -R u+x "$prefix/bin" 2>/dev/null || true
-    if usable_python "$p"; then
-      printf '%s' "$p"
+copy_tree_clean() {
+  local from="$1" to="$2"
+  rm -rf "$to"
+  if /usr/bin/ditto --norsrc --noextattr --noqtn "$from" "$to" 2>>"$LOG"; then
+    :
+  else
+    mkdir -p "$to"
+    rsync -a "$from/" "$to/"
+  fi
+  xattr -cr "$to" 2>/dev/null || true
+}
+
+prepare_runtime_python() {
+  local dest="$DATA/runtime"
+  local py="$dest/bin/python3.12"
+  [[ -e "$py" ]] || py="$dest/bin/python3"
+  if usable_python "$py"; then
+    printf '%s' "$py"
+    return 0
+  fi
+
+  local arch_pat="aarch64"
+  [[ "$ARCH" == "x86_64" ]] && arch_pat="x86_64"
+  local src="" d
+  log "look for bundled python arch=$ARCH resources=$RESOURCES"
+  ls -la "$RESOURCES" >>"$LOG" 2>&1 || true
+  ls -la "$RESOURCES/python" >>"$LOG" 2>&1 || true
+  for d in "$RESOURCES"/python/cpython-*-macos-${arch_pat}-none; do
+    [[ -e "$d/bin" ]] || continue
+    if [[ -L "$d" ]]; then continue; fi
+    src="$d"
+  done
+  if [[ -z "$src" ]]; then
+    for d in "$RESOURCES"/python/cpython-*-macos-${arch_pat}-none; do
+      [[ -e "$d/bin" ]] || continue
+      src="$d"
+      break
+    done
+  fi
+  if [[ -n "$src" ]]; then
+    log "copy python from $src"
+    copy_tree_clean "$src" "$dest"
+    chmod -R u+x "$dest/bin" 2>/dev/null || true
+    py="$dest/bin/python3.12"
+    [[ -e "$py" ]] || py="$dest/bin/python3"
+    /usr/bin/codesign --force --sign - --timestamp=none "$py" >/dev/null 2>&1 || true
+    if usable_python "$py"; then
+      printf '%s' "$py"
       return 0
     fi
-  done
+    log "copied python not usable: $py"
+    "$py" -V >>"$LOG" 2>&1 || true
+  else
+    log "no bundled python for $arch_pat"
+  fi
+
+  local tag="20260901" ver="3.12.14" plat="aarch64-apple-darwin"
+  [[ "$ARCH" == "x86_64" ]] && plat="x86_64-apple-darwin"
+  local name="cpython-${ver}+${tag}-${plat}-install_only.tar.gz"
+  local tmp="$DATA/$name"
+  log "download python $name"
+  if github_fetch "$tmp" "https://github.com/astral-sh/python-build-standalone/releases/download/${tag}/${name}"; then
+    rm -rf "$DATA/runtime-unpack" "$dest"
+    mkdir -p "$DATA/runtime-unpack"
+    tar -xzf "$tmp" -C "$DATA/runtime-unpack"
+    if [[ -d "$DATA/runtime-unpack/python" ]]; then
+      copy_tree_clean "$DATA/runtime-unpack/python" "$dest"
+    fi
+    rm -rf "$DATA/runtime-unpack" "$tmp"
+    py="$dest/bin/python3.12"
+    [[ -e "$py" ]] || py="$dest/bin/python3"
+    /usr/bin/codesign --force --sign - --timestamp=none "$py" >/dev/null 2>&1 || true
+    if usable_python "$py"; then
+      printf '%s' "$py"
+      return 0
+    fi
+    log "downloaded python not usable: $py"
+  fi
   return 1
 }
 
 ensure_uv() {
   if [[ -x "$RESOURCES/bin/uv" ]]; then
-    cp "$RESOURCES/bin/uv" "$DATA/bin/uv"
-    chmod +x "$DATA/bin/uv"
-    xattr -dr com.apple.quarantine "$DATA/bin/uv" 2>/dev/null || true
+    copy_exec "$RESOURCES/bin/uv" "$DATA/bin/uv"
     return 0
   fi
   if [[ -x "$DATA/bin/uv" ]]; then
+    xattr -cr "$DATA/bin/uv" 2>/dev/null || true
     return 0
   fi
   local asset="uv-aarch64-apple-darwin.tar.gz"
@@ -237,6 +346,8 @@ ensure_uv() {
     [[ -n "$found" ]] && cp "$found" "$DATA/bin/uv"
   fi
   chmod +x "$DATA/bin/uv" 2>/dev/null || fail "运行环境下载后无法使用。"
+  xattr -cr "$DATA/bin/uv" 2>/dev/null || true
+  /usr/bin/codesign --force --sign - --timestamp=none "$DATA/bin/uv" >/dev/null 2>&1 || true
 }
 
 ensure_ffmpeg() {
@@ -244,9 +355,8 @@ ensure_ffmpeg() {
     return 0
   fi
   if [[ -x "$RESOURCES/bin/ffmpeg" && -x "$RESOURCES/bin/ffprobe" ]]; then
-    cp "$RESOURCES/bin/ffmpeg" "$DATA/bin/ffmpeg"
-    cp "$RESOURCES/bin/ffprobe" "$DATA/bin/ffprobe"
-    chmod +x "$DATA/bin/ffmpeg" "$DATA/bin/ffprobe"
+    copy_exec "$RESOURCES/bin/ffmpeg" "$DATA/bin/ffmpeg"
+    copy_exec "$RESOURCES/bin/ffprobe" "$DATA/bin/ffprobe"
     return 0
   fi
   if have_cmd ffmpeg && have_cmd ffprobe; then
@@ -329,41 +439,23 @@ ensure_venv() {
   if [[ ! -x "$DATA/venv/bin/python" ]]; then
     log "create venv"
     local py=""
-    py="$(find_bundled_python || true)"
-    if [[ -n "$py" ]]; then
-      log "using bundled python $py"
-      if ! "$uv" venv "$DATA/venv" --python "$py"; then
-        log "uv venv failed, try python -m venv"
-        "$py" -m venv "$DATA/venv" || fail "没法创建运行环境。"
+    py="$(prepare_runtime_python || true)"
+    if [[ -z "$py" ]]; then
+      local syspy=""
+      if usable_python /usr/bin/python3; then
+        syspy="/usr/bin/python3"
+      elif have_cmd python3 && usable_python "$(command -v python3)"; then
+        syspy="$(command -v python3)"
       fi
-    else
-      log "no bundled python, try uv install mirror=$UV_PYTHON_INSTALL_MIRROR dir=$UV_PYTHON_INSTALL_DIR"
-      local ok=0
-      local ver
-      for ver in 3.12 3.11; do
-        if "$uv" python install "$ver"; then
-          if "$uv" venv "$DATA/venv" --python "$ver"; then
-            ok=1
-            break
-          fi
-        else
-          log "uv python install $ver failed"
-        fi
-      done
-      if [[ "$ok" -ne 1 ]]; then
-        local syspy=""
-        if usable_python /usr/bin/python3; then
-          syspy="/usr/bin/python3"
-        elif have_cmd python3 && usable_python "$(command -v python3)"; then
-          syspy="$(command -v python3)"
-        fi
-        if [[ -n "$syspy" ]]; then
-          log "fallback system python $syspy"
-          "$uv" venv "$DATA/venv" --python "$syspy" || fail "没法创建运行环境。"
-        else
-          fail "没法准备 Python。请删掉旧的「转录小工具」，重新下载后再打开。"
-        fi
-      fi
+      py="$syspy"
+    fi
+    if [[ -z "$py" ]]; then
+      fail "没法准备 Python。点「再复制一次」，回到聊天粘贴发给我。"
+    fi
+    log "venv python=$py"
+    rm -rf "$DATA/venv"
+    if ! "$py" -m venv "$DATA/venv"; then
+      "$uv" venv "$DATA/venv" --python "$py" || fail "没法创建运行环境。"
     fi
   fi
   log "install python packages"
@@ -402,7 +494,7 @@ wait_ready() {
   fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
 }
 
-log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910c"
+log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910e resources=$RESOURCES"
 ensure_uv
 refresh_app
 ensure_venv
