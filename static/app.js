@@ -180,7 +180,7 @@ async function bringServiceUp(url) {
   if (!currentTask) return false;
   openServiceGuide();
   startLocalService();
-  return waitUntilReady(10 * 60 * 1000, true);
+  return waitUntilReady(10 * 60 * 1000, false);
 }
 
 function formatRemain(seconds) {

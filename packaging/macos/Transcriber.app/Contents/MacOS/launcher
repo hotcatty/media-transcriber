@@ -180,7 +180,7 @@ runs_here() {
 build_diagnostics() {
   printf '%s\n' "转录小工具 诊断"
   printf '%s\n' "time=$(date '+%Y-%m-%d %H:%M:%S')"
-  printf '%s\n' "launcher=20260910i"
+  printf '%s\n' "launcher=20260910j"
   printf '%s\n' "arch=$ARCH"
   sw_vers 2>/dev/null | sed 's/^/sw_vers /' || true
   printf '%s\n' "here=$HERE"
@@ -589,6 +589,24 @@ ensure_venv() {
   if ! "$vpy" -m pip --version >>"$LOG" 2>&1; then
     "$vpy" -m ensurepip --upgrade >>"$LOG" 2>&1 || true
   fi
+  if install_from_req "$req"; then
+    return 0
+  fi
+  if grep -q 'mlx-whisper' "$req" 2>/dev/null; then
+    local stripped="$DATA/requirements-nomlx.txt"
+    grep -v 'mlx-whisper' "$req" >"$stripped"
+    log "retry packages without mlx-whisper"
+    if install_from_req "$stripped"; then
+      return 0
+    fi
+  fi
+  fail "没法安装依赖。请检查网络后再打开一次。"
+}
+
+install_from_req() {
+  local req="$1"
+  local uv="$DATA/bin/uv"
+  local vpy="$DATA/venv/bin/python"
   local indexes=(
     "https://mirrors.aliyun.com/pypi/simple/"
     "https://mirrors.cloud.tencent.com/pypi/simple"
@@ -599,7 +617,7 @@ ensure_venv() {
   local idx host
   for idx in "${indexes[@]}"; do
     host="$(printf '%s' "$idx" | sed -E 's#^https?://##' | cut -d/ -f1)"
-    log "try index $idx"
+    log "try index $idx req=$(basename "$req")"
     if runs_here "$uv"; then
       if "$uv" pip install --python "$vpy" -r "$req" --index-url "$idx" >>"$LOG" 2>&1; then
         return 0
@@ -611,7 +629,7 @@ ensure_venv() {
     fi
     log "pip failed on $idx"
   done
-  fail "没法安装依赖。请检查网络后再打开一次。"
+  return 1
 }
 
 start_server() {
@@ -645,7 +663,7 @@ wait_ready() {
   fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
 }
 
-log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910i resources=$RESOURCES"
+log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910j resources=$RESOURCES"
 ensure_uv
 refresh_app
 ensure_venv
