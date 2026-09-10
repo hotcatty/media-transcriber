@@ -60,8 +60,8 @@ export MT_MODELS_DIR="${HOME}/.cache/media-transcriber/models"
 export MT_FFMPEG="$DATA/bin/ffmpeg"
 export MT_FFPROBE="$DATA/bin/ffprobe"
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
-export UV_INDEX_URL="${UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
-export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+# Do not pin a single PyPI mirror: tuna often returns 403 off-campus.
+unset UV_INDEX_URL PIP_INDEX_URL
 export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-https://cdn.npmmirror.com/binaries/python-build-standalone}"
 if [[ -d "$RESOURCES/python" && -n "$(find "$RESOURCES/python" -type f 2>/dev/null | head -1)" ]]; then
   export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$RESOURCES/python}"
@@ -173,7 +173,7 @@ runs_here() {
 build_diagnostics() {
   printf '%s\n' "转录小工具 诊断"
   printf '%s\n' "time=$(date '+%Y-%m-%d %H:%M:%S')"
-  printf '%s\n' "launcher=20260910g"
+  printf '%s\n' "launcher=20260910h"
   printf '%s\n' "arch=$ARCH"
   sw_vers 2>/dev/null | sed 's/^/sw_vers /' || true
   printf '%s\n' "here=$HERE"
@@ -579,19 +579,32 @@ ensure_venv() {
   log "install python packages"
   local req="$DATA/app/requirements.txt"
   local vpy="$DATA/venv/bin/python"
-  if runs_here "$uv"; then
-    if "$uv" pip install --python "$vpy" -r "$req"; then
-      return 0
-    fi
-    log "uv pip failed, try python -m pip"
-  else
-    log "uv missing or wrong cpu, use python -m pip"
-  fi
   if ! "$vpy" -m pip --version >>"$LOG" 2>&1; then
     "$vpy" -m ensurepip --upgrade >>"$LOG" 2>&1 || true
   fi
-  "$vpy" -m pip install -r "$req" >>"$LOG" 2>&1 \
-    || fail "没法安装依赖。请检查网络后再打开一次。"
+  local indexes=(
+    "https://mirrors.aliyun.com/pypi/simple/"
+    "https://mirrors.cloud.tencent.com/pypi/simple"
+    "https://pypi.mirrors.ustc.edu.cn/simple/"
+    "https://pypi.tuna.tsinghua.edu.cn/simple"
+    "https://pypi.org/simple"
+  )
+  local idx host
+  for idx in "${indexes[@]}"; do
+    host="$(printf '%s' "$idx" | sed -E 's#^https?://##' | cut -d/ -f1)"
+    log "try index $idx"
+    if runs_here "$uv"; then
+      if "$uv" pip install --python "$vpy" -r "$req" --index-url "$idx" >>"$LOG" 2>&1; then
+        return 0
+      fi
+      log "uv pip failed on $idx"
+    fi
+    if "$vpy" -m pip install -r "$req" -i "$idx" --trusted-host "$host" --timeout 60 --retries 2 >>"$LOG" 2>&1; then
+      return 0
+    fi
+    log "pip failed on $idx"
+  done
+  fail "没法安装依赖。请检查网络后再打开一次。"
 }
 
 start_server() {
@@ -625,7 +638,7 @@ wait_ready() {
   fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
 }
 
-log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910g resources=$RESOURCES"
+log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910h resources=$RESOURCES"
 ensure_uv
 refresh_app
 ensure_venv

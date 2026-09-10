@@ -28,7 +28,7 @@ function Copy-Diagnostics([string]$Message) {
     $lines = @(
         "转录小工具 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
-        "launcher=windows-20260910g",
+        "launcher=windows-20260910h",
         "os=$([Environment]::OSVersion.VersionString)",
         "root=$Root",
         "error=$Message",
@@ -186,8 +186,8 @@ $env:MT_COOKIE_FILE = Join-Path $Data "cookies.txt"
 $env:MT_FFMPEG = Join-Path $Data "bin\ffmpeg.exe"
 $env:MT_FFPROBE = Join-Path $Data "bin\ffprobe.exe"
 if (-not $env:HF_ENDPOINT) { $env:HF_ENDPOINT = "https://hf-mirror.com" }
-if (-not $env:UV_INDEX_URL) { $env:UV_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-if (-not $env:PIP_INDEX_URL) { $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+Remove-Item Env:UV_INDEX_URL -ErrorAction SilentlyContinue
+Remove-Item Env:PIP_INDEX_URL -ErrorAction SilentlyContinue
 if (-not $env:UV_PYTHON_INSTALL_MIRROR) {
     $env:UV_PYTHON_INSTALL_MIRROR = "https://cdn.npmmirror.com/binaries/python-build-standalone"
 }
@@ -339,8 +339,28 @@ function Ensure-Venv {
         }
     }
     Write-Log "install python packages"
-    & $uv pip install --python $py -r (Join-Path $Data "app\requirements.txt")
-    if ($LASTEXITCODE -ne 0) { Fail "没法安装依赖。请检查网络后再打开一次。" }
+    $req = Join-Path $Data "app\requirements.txt"
+    $indexes = @(
+        "https://mirrors.aliyun.com/pypi/simple/",
+        "https://mirrors.cloud.tencent.com/pypi/simple",
+        "https://pypi.mirrors.ustc.edu.cn/simple/",
+        "https://pypi.tuna.tsinghua.edu.cn/simple",
+        "https://pypi.org/simple"
+    )
+    $ok = $false
+    foreach ($idx in $indexes) {
+        $host = ([Uri]$idx).Host
+        Write-Log "try index $idx"
+        if (Test-Path $uv) {
+            & $uv pip install --python $py -r $req --index-url $idx
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Write-Log "uv pip failed on $idx"
+        }
+        & $py -m pip install -r $req -i $idx --trusted-host $host --timeout 60 --retries 2
+        if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+        Write-Log "pip failed on $idx"
+    }
+    if (-not $ok) { Fail "没法安装依赖。请检查网络后再打开一次。" }
 }
 
 function Start-Server {
