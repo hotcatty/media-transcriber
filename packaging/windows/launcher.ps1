@@ -28,7 +28,7 @@ function Copy-Diagnostics([string]$Message) {
     $lines = @(
         "转录小工具 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
-        "launcher=windows-20260910e",
+        "launcher=windows-20260910f",
         "os=$([Environment]::OSVersion.VersionString)",
         "root=$Root",
         "error=$Message",
@@ -48,15 +48,43 @@ function Copy-Diagnostics([string]$Message) {
     } catch { }
 }
 
+function Show-DiagWindow([string]$Text) {
+    Add-Type -AssemblyName System.Windows.Forms | Out-Null
+    Add-Type -AssemblyName System.Drawing | Out-Null
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "转录小工具 · 说明"
+    $form.Width = 720
+    $form.Height = 560
+    $form.StartPosition = "CenterScreen"
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.Text = "复制说明"
+    $btn.Dock = "Bottom"
+    $btn.Height = 36
+    $box = New-Object System.Windows.Forms.TextBox
+    $box.Multiline = $true
+    $box.ScrollBars = "Both"
+    $box.ReadOnly = $true
+    $box.Dock = "Fill"
+    $box.Font = New-Object System.Drawing.Font("Consolas", 10)
+    $box.WordWrap = $false
+    $box.Text = $Text
+    $btn.Tag = $box
+    $btn.Add_Click({
+        $src = $this.Tag
+        Set-Clipboard -Value $src.Text
+        $this.Text = "已复制"
+    })
+    $form.Controls.Add($btn)
+    $form.Controls.Add($box)
+    [void]$form.ShowDialog()
+}
+
 function Fail([string]$Message) {
     Write-Log "ERROR: $Message"
     Copy-Diagnostics $Message
-    Add-Type -AssemblyName System.Windows.Forms | Out-Null
-    $r = [System.Windows.Forms.MessageBox]::Show(
-        "本机组件没准备好。$Message`r`n`r`n说明已复制。回到聊天粘贴发给我即可。",
-        "转录小工具",
-        [System.Windows.Forms.MessageBoxButtons]::OK
-    )
+    $diag = Join-Path $LogDir "media-transcriber-diag.txt"
+    $text = if (Test-Path $diag) { Get-Content $diag -Raw -Encoding UTF8 } else { $Message }
+    Show-DiagWindow $text
     exit 1
 }
 

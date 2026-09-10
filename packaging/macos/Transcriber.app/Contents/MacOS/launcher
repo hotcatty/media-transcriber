@@ -11,7 +11,8 @@ for arg in "$@"; do
   esac
 done
 
-CONTENTS="$(cd "$(dirname "$0")/.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+CONTENTS="$(cd "$HERE/.." && pwd)"
 RESOURCES="$CONTENTS/Resources"
 ROOT="$(cd "$CONTENTS/.." && pwd)"
 DATA="${HOME}/Library/Application Support/media-transcriber"
@@ -24,9 +25,10 @@ REPO="hotcatty/media-transcriber"
 ARCH="$(uname -m)"
 
 mkdir -p "$DATA/bin" "$DATA/app" "$DATA/python" "$LOG_DIR"
-exec >>"$LOG" 2>&1
+# Keep stdout free so $(...) helpers can return a path. All logs go to the file.
+exec 2>>"$LOG"
 
-log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG"; }
 
 notify() {
   /usr/bin/osascript -e "display notification \"$2\" with title \"转录小工具\"" >/dev/null 2>&1 || true
@@ -155,16 +157,17 @@ copy_exec() {
   local from="$1" to="$2"
   cp -X "$from" "$to" 2>/dev/null || cp "$from" "$to"
   xattr -cr "$to" 2>/dev/null || true
+  xattr -d com.apple.quarantine "$to" 2>/dev/null || true
   chmod +x "$to"
-  /usr/bin/codesign --force --sign - --timestamp=none "$to" >/dev/null 2>&1 || true
 }
 
 build_diagnostics() {
   printf '%s\n' "转录小工具 诊断"
   printf '%s\n' "time=$(date '+%Y-%m-%d %H:%M:%S')"
-  printf '%s\n' "launcher=20260910e"
+  printf '%s\n' "launcher=20260910f"
   printf '%s\n' "arch=$ARCH"
   sw_vers 2>/dev/null | sed 's/^/sw_vers /' || true
+  printf '%s\n' "here=$HERE"
   printf '%s\n' "root=$ROOT"
   printf '%s\n' "resources=$RESOURCES"
   printf '%s\n' "ls_resources=$(ls "$RESOURCES" 2>/dev/null | tr '\n' ' ')"
@@ -172,35 +175,82 @@ build_diagnostics() {
   printf '%s\n' "error=$1"
   printf '%s\n' "---- log ----"
   if [[ -f "$LOG" ]]; then
-    grep -viE 'cookie|authorization|token=|password' "$LOG" | tail -n 160
+    grep -viE 'cookie|authorization|token=|password' "$LOG" | tail -n 200
   else
     printf '%s\n' "(no log)"
   fi
+}
+
+write_diag_html() {
+  local txt="$1" html="$2"
+  {
+    cat <<'EOF'
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>转录小工具 · 说明</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; margin: 24px; color: #111; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  p { color: #555; line-height: 1.5; }
+  button { font-size: 16px; padding: 8px 16px; margin: 8px 0 16px; }
+  textarea { width: 100%; height: 70vh; font: 13px ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<h1>转录小工具 · 说明</h1>
+<p>把下面整段发给我。不会上传到网上。如果按钮没反应，先点一下文本框，再按 Command+A、Command+C。</p>
+<p><button type="button" id="btn">复制说明</button> <span id="ok"></span></p>
+<textarea id="log" readonly>
+EOF
+    sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' "$txt" | sed 's#</textarea>#&lt;/textarea&gt;#g'
+    cat <<'EOF'
+</textarea>
+<script>
+var t = document.getElementById("log");
+var btn = document.getElementById("btn");
+btn.onclick = function () {
+  t.focus();
+  t.select();
+  var ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) {}
+  function done() {
+    btn.textContent = "已复制";
+    document.getElementById("ok").textContent = "可以回到聊天粘贴了";
+  }
+  if (ok) { done(); return; }
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(t.value).then(done).catch(function () {});
+  }
+};
+</script>
+</body>
+</html>
+EOF
+  } >"$html"
 }
 
 fail() {
   log "ERROR: $*"
   stop_bootstrap
   local diag_file="$LOG_DIR/media-transcriber-diag.txt"
+  local diag_html="$LOG_DIR/media-transcriber-diag.html"
   build_diagnostics "$*" >"$diag_file" 2>/dev/null || true
-  /usr/bin/pbcopy <"$diag_file" 2>/dev/null || true
-  local btn
-  btn="$(/usr/bin/osascript - "本机组件没准备好。$*" <<'APPLESCRIPT' 2>/dev/null || true
+  write_diag_html "$diag_file" "$diag_html"
+  /usr/bin/open -a Safari "$diag_html" >/dev/null 2>&1 \
+    || /usr/bin/open "$diag_html" >/dev/null 2>&1 \
+    || /usr/bin/open -e "$diag_file" >/dev/null 2>&1 \
+    || true
+  /usr/bin/osascript - "本机组件没准备好。$* 已打开说明页，点「复制说明」后发给我。" <<'APPLESCRIPT' >/dev/null 2>&1 || true
 on run argv
   set msg to item 1 of argv
   try
-    set r to button returned of (display dialog msg & return & return & "说明已复制。回到聊天粘贴发给我即可。" with title "转录小工具" buttons {"好", "再复制一次"} default button "再复制一次")
-    return r
-  on error
-    return "好"
+    display dialog msg with title "转录小工具" buttons {"好"} default button "好"
   end try
 end run
 APPLESCRIPT
-)"
-  if [[ "$btn" == "再复制一次" ]]; then
-    /usr/bin/pbcopy <"$diag_file" 2>/dev/null || true
-    alert "说明已复制。回到聊天粘贴发给我即可。"
-  fi
   exit 1
 }
 
@@ -235,7 +285,16 @@ usable_python() {
   local p="$1"
   [[ -n "$p" && -e "$p" ]] || return 1
   chmod +x "$p" 2>/dev/null || true
-  "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null
+  xattr -d com.apple.quarantine "$p" 2>/dev/null || true
+  log "probe python $p"
+  ls -l@ "$p" >>"$LOG" 2>&1 || true
+  /usr/bin/file "$p" >>"$LOG" 2>&1 || true
+  if "$p" -c 'import sys; print(sys.version)' >>"$LOG" 2>&1; then
+    "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null
+    return $?
+  fi
+  log "python probe failed status=$?"
+  return 1
 }
 
 copy_tree_clean() {
@@ -255,7 +314,7 @@ prepare_runtime_python() {
   local py="$dest/bin/python3.12"
   [[ -e "$py" ]] || py="$dest/bin/python3"
   if usable_python "$py"; then
-    printf '%s' "$py"
+    RUNTIME_PY="$py"
     return 0
   fi
 
@@ -283,13 +342,11 @@ prepare_runtime_python() {
     chmod -R u+x "$dest/bin" 2>/dev/null || true
     py="$dest/bin/python3.12"
     [[ -e "$py" ]] || py="$dest/bin/python3"
-    /usr/bin/codesign --force --sign - --timestamp=none "$py" >/dev/null 2>&1 || true
     if usable_python "$py"; then
-      printf '%s' "$py"
+      RUNTIME_PY="$py"
       return 0
     fi
     log "copied python not usable: $py"
-    "$py" -V >>"$LOG" 2>&1 || true
   else
     log "no bundled python for $arch_pat"
   fi
@@ -309,9 +366,8 @@ prepare_runtime_python() {
     rm -rf "$DATA/runtime-unpack" "$tmp"
     py="$dest/bin/python3.12"
     [[ -e "$py" ]] || py="$dest/bin/python3"
-    /usr/bin/codesign --force --sign - --timestamp=none "$py" >/dev/null 2>&1 || true
     if usable_python "$py"; then
-      printf '%s' "$py"
+      RUNTIME_PY="$py"
       return 0
     fi
     log "downloaded python not usable: $py"
@@ -347,7 +403,6 @@ ensure_uv() {
   fi
   chmod +x "$DATA/bin/uv" 2>/dev/null || fail "运行环境下载后无法使用。"
   xattr -cr "$DATA/bin/uv" 2>/dev/null || true
-  /usr/bin/codesign --force --sign - --timestamp=none "$DATA/bin/uv" >/dev/null 2>&1 || true
 }
 
 ensure_ffmpeg() {
@@ -439,7 +494,9 @@ ensure_venv() {
   if [[ ! -x "$DATA/venv/bin/python" ]]; then
     log "create venv"
     local py=""
-    py="$(prepare_runtime_python || true)"
+    RUNTIME_PY=""
+    prepare_runtime_python || true
+    py="${RUNTIME_PY:-}"
     if [[ -z "$py" ]]; then
       local syspy=""
       if usable_python /usr/bin/python3; then
@@ -450,7 +507,7 @@ ensure_venv() {
       py="$syspy"
     fi
     if [[ -z "$py" ]]; then
-      fail "没法准备 Python。点「再复制一次」，回到聊天粘贴发给我。"
+      fail "没法准备 Python。请看已打开的说明页。"
     fi
     log "venv python=$py"
     rm -rf "$DATA/venv"
@@ -494,7 +551,7 @@ wait_ready() {
   fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
 }
 
-log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910e resources=$RESOURCES"
+log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910f resources=$RESOURCES"
 ensure_uv
 refresh_app
 ensure_venv
