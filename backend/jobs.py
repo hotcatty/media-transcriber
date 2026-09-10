@@ -292,16 +292,18 @@ def _format_total_wait(seconds: Optional[float]) -> str:
 
 
 def _step_remain(task: Task) -> float:
-    """Countdown for the open step, from that step's own sample."""
+    """Countdown for the open step. Never climbs above the frozen job leftover."""
     now = time.time()
     measured = eta.remain_from_detail(task.detail, now)
     computed = _prior_remain(task)
+    remain = measured if measured is not None else computed
     if (task.stage or "") in ("transcribing", "planning", "downloading_model"):
-        if computed and (measured is None or measured < 8 or computed > measured + 8):
-            return float(computed)
-    if measured is not None:
-        return measured
-    return computed
+        if measured is None or measured < 8:
+            remain = max(float(remain or 0.0), float(computed or 0.0))
+    cap = eta.budget_remain(task.detail, now)
+    if cap is not None:
+        remain = min(float(remain or 0.0), cap)
+    return float(remain or 0.0)
 
 
 def _attach_step_progress(task: Task, steps: list) -> list:
@@ -633,10 +635,7 @@ class JobManager:
         if task and (task.detail or {}).get("eta_budget") is not None:
             trailing = _trailing_remain(task)
         measured_job = None if measured is None else max(0.0, float(measured) + trailing)
-        if measured_job is not None and prev is not None and measured_job > prev + 8:
-            blended = prev * 0.35 + measured_job * 0.65
-        else:
-            blended = eta.smooth(prev, measured_job, dt)
+        blended = eta.smooth(prev, measured_job, dt)
         if blended is None:
             blended = measured_job if measured_job is not None else (prev or 0.0)
         return float(max(0.0, blended))
@@ -854,6 +853,13 @@ class JobManager:
                 )
                 title = info.title if is_real_title(info.title or "") else title
                 duration = info.duration or duration
+                if not duration and info.audio_url:
+                    try:
+                        duration = await asyncio.to_thread(
+                            audio_utils.probe_duration, info.audio_url, 20,
+                        )
+                    except Exception:
+                        duration = duration
                 if duration:
                     self.store.update(task_id, duration=duration, title=title, flush=True)
                 self._freeze_budget(task_id, duration)

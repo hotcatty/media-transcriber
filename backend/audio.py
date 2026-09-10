@@ -58,12 +58,12 @@ def check_ffmpeg() -> Optional[str]:
         return "未检测到 ffmpeg。macOS 请执行：brew install ffmpeg；Debian/Ubuntu：sudo apt install ffmpeg"
 
 
-def probe_duration(path: str | Path) -> float:
-    """Duration in seconds. Raises if the file is not decodable."""
+def probe_duration(path: str | Path, timeout: float = 120) -> float:
+    """Duration in seconds. Raises if the file (or URL) is not decodable."""
     r = subprocess.run(
         [FFPROBE, "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", str(path)],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=timeout,
     )
     raw = (r.stdout or "").strip()
     try:

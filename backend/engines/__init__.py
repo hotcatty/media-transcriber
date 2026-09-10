@@ -41,10 +41,10 @@ MLX_CHOICES = [
 ]
 
 FW_CHOICES = [
-    {"id": "large-v3", "label": "large-v3（推荐）", "size_mb": 3090,
-     "note": "非 Apple Silicon 平台首选"},
-    {"id": "large-v3-turbo", "label": "large-v3-turbo", "size_mb": 1620,
-     "note": "更快，准确率略低"},
+    {"id": "large-v3-turbo", "label": "large-v3-turbo（推荐）", "size_mb": 1620,
+     "note": "CPU 上比 large-v3 快一截，中文仍可用"},
+    {"id": "large-v3", "label": "large-v3（更准）", "size_mb": 3090,
+     "note": "CPU 上明显更慢"},
     {"id": "medium", "label": "medium", "size_mb": 1530, "note": "中文勉强可用"},
     {"id": "small", "label": "small（快速预览）", "size_mb": 484, "note": "仅适合预览"},
 ]

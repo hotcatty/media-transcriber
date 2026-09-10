@@ -76,7 +76,7 @@ ENGINE = os.getenv("MT_ENGINE", "auto").lower()
 # Default models per backend. large-v3-turbo is the quality/speed sweet spot;
 # `base` was measured to produce unusable Chinese (审美→神媒, 认知→任志).
 MLX_MODEL = os.getenv("MT_MLX_MODEL", "mlx-community/whisper-large-v3-turbo")
-FASTER_WHISPER_MODEL = os.getenv("MT_FW_MODEL", "large-v3")
+FASTER_WHISPER_MODEL = os.getenv("MT_FW_MODEL", "large-v3-turbo")
 
 # Chunking: long audio is split on silence so we can report real progress,
 # support resume, and keep memory bounded.

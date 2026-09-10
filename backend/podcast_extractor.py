@@ -192,14 +192,98 @@ async def _parse_xiaoyuzhou_html(url: str) -> PodcastInfo:
         )
 
     logger.info(f"从 HTML 提取到音频链接: {audio_url[:80]}...")
+    duration = _extract_duration_from_html(html)
     return PodcastInfo(
         audio_url=audio_url,
         title=title,
         podcast_name=podcast_name,
-        duration=None,
+        duration=duration,
         cover_url=cover_url,
         description=description,
     )
+
+
+def _coerce_duration(val) -> Optional[float]:
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        n = float(val)
+        return n if n > 1 else None
+    if not isinstance(val, str):
+        return None
+    s = val.strip()
+    if re.fullmatch(r"\d+(\.\d+)?", s):
+        n = float(s)
+        return n if n > 1 else None
+    m = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?", s, re.I)
+    if not m:
+        return None
+    h, mi, sec = m.groups()
+    n = int(h or 0) * 3600 + int(mi or 0) * 60 + float(sec or 0)
+    return n if n > 1 else None
+
+
+def _extract_duration_from_html(html: str) -> Optional[float]:
+    for m in re.finditer(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>([\s\S]*?)</script>',
+        html,
+        re.IGNORECASE,
+    ):
+        try:
+            import json
+            data = json.loads(m.group(1))
+        except Exception:
+            continue
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        if isinstance(data, dict):
+            for key in ("duration", "timeRequired"):
+                n = _coerce_duration(data.get(key))
+                if n:
+                    return n
+    n = _deep_find_duration(_next_data(html))
+    return n
+
+
+def _next_data(html: str):
+    import json
+    m = re.search(r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>([\s\S]*?)</script>', html, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except Exception:
+        return None
+
+
+def _deep_find_duration(obj, depth: int = 0) -> Optional[float]:
+    if obj is None or depth > 10:
+        return None
+    if isinstance(obj, dict):
+        for key in ("duration", "durationInSeconds", "duration_ms", "timeRequired"):
+            if key not in obj:
+                continue
+            val = obj.get(key)
+            if key == "duration_ms":
+                try:
+                    n = float(val) / 1000.0
+                    if n > 1:
+                        return n
+                except (TypeError, ValueError):
+                    pass
+            n = _coerce_duration(val)
+            if n:
+                return n
+        for v in obj.values():
+            n = _deep_find_duration(v, depth + 1)
+            if n:
+                return n
+    if isinstance(obj, list):
+        for item in obj[:30]:
+            n = _deep_find_duration(item, depth + 1)
+            if n:
+                return n
+    return None
 
 
 def _extract_og_meta(html: str, prop: str) -> Optional[str]:
