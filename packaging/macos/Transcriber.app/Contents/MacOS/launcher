@@ -46,9 +46,16 @@ helper_ready() {
   return 0
 }
 
+say_ready() {
+  notify "已经准备好" "回到原来的网页就能继续转录。"
+  if [[ "$SCHEME_LAUNCH" == 0 ]]; then
+    alert "已经准备好。回到原来的网页，粘贴链接就能转录。不必反复打开这个程序。"
+  fi
+}
+
 if helper_ready; then
   log "already running scheme=$SCHEME_LAUNCH"
-  notify "已经准备好" "回到原来的网页就能继续转录。"
+  say_ready
   exit 0
 fi
 
@@ -173,7 +180,7 @@ runs_here() {
 build_diagnostics() {
   printf '%s\n' "转录小工具 诊断"
   printf '%s\n' "time=$(date '+%Y-%m-%d %H:%M:%S')"
-  printf '%s\n' "launcher=20260910h"
+  printf '%s\n' "launcher=20260910i"
   printf '%s\n' "arch=$ARCH"
   sw_vers 2>/dev/null | sed 's/^/sw_vers /' || true
   printf '%s\n' "here=$HERE"
@@ -638,13 +645,13 @@ wait_ready() {
   fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
 }
 
-log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910h resources=$RESOURCES"
+log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910i resources=$RESOURCES"
 ensure_uv
 refresh_app
 ensure_venv
 ensure_ffmpeg
 start_server
 wait_ready
-notify "已经准备好" "回到原来的网页就能继续转录。"
 log "launch ok"
+say_ready
 exit 0

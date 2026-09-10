@@ -13,9 +13,11 @@ rm -rf "$STAGE" "$ZIP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app" "$APP/Contents/Resources/bin"
 
 rsync -a "$SRC/Contents/Info.plist" "$APP/Contents/"
-rsync -a "$SRC/Contents/MacOS/launcher" "$APP/Contents/MacOS/"
+rsync -a "$SRC/Contents/MacOS/launcher" "$APP/Contents/MacOS/launcher.bash"
 rsync -a "$SRC/Contents/Resources/waiting.html" "$APP/Contents/Resources/"
-chmod +x "$APP/Contents/MacOS/launcher"
+clang -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 -Os \
+  -o "$APP/Contents/MacOS/launcher" "$ROOT/packaging/macos/stub.c"
+chmod +x "$APP/Contents/MacOS/launcher" "$APP/Contents/MacOS/launcher.bash"
 
 APP_RES="$APP/Contents/Resources/app"
 mkdir -p "$APP_RES"
