@@ -27,22 +27,34 @@ rsync -a --delete --exclude __pycache__ \
   "$ROOT/static/" "$APP_RES/static/"
 
 ARCH="$(uname -m)"
-UV_ASSET="uv-aarch64-apple-darwin.tar.gz"
-[[ "$ARCH" == "x86_64" ]] && UV_ASSET="uv-x86_64-apple-darwin.tar.gz"
-UV_TGZ="$DIST/uv.tgz"
-echo "download $UV_ASSET"
-curl -fL --retry 3 --retry-delay 2 -o "$UV_TGZ" \
-  "https://github.com/astral-sh/uv/releases/latest/download/${UV_ASSET}"
-tar -xzf "$UV_TGZ" -C "$APP/Contents/Resources/bin"
-# tarball may nest the binary
-if [[ ! -x "$APP/Contents/Resources/bin/uv" ]]; then
-  found="$(find "$APP/Contents/Resources/bin" -name uv -type f | head -1)"
-  [[ -n "$found" ]] && mv "$found" "$APP/Contents/Resources/bin/uv"
+BIN="$APP/Contents/Resources/bin"
+
+fetch_uv() {
+  local asset="$1"
+  local name="$2"
+  local tgz="$DIST/${name}.tgz"
+  local unpack="$DIST/uv-unpack-${name}"
+  rm -rf "$unpack"
+  mkdir -p "$unpack"
+  echo "download $asset -> $name"
+  curl -fL --retry 3 --retry-delay 2 -o "$tgz" \
+    "https://github.com/astral-sh/uv/releases/latest/download/${asset}"
+  tar -xzf "$tgz" -C "$unpack"
+  local found
+  found="$(find "$unpack" -name uv -type f | head -1)"
+  cp "$found" "$BIN/$name"
+  chmod +x "$BIN/$name"
+  rm -rf "$tgz" "$unpack"
+}
+
+fetch_uv uv-aarch64-apple-darwin.tar.gz uv-arm64
+fetch_uv uv-x86_64-apple-darwin.tar.gz uv-x86_64
+if [[ "$ARCH" == "x86_64" ]]; then
+  cp "$BIN/uv-x86_64" "$BIN/uv"
+else
+  cp "$BIN/uv-arm64" "$BIN/uv"
 fi
-chmod +x "$APP/Contents/Resources/bin/uv"
-rm -f "$UV_TGZ"
-# drop extra files from the uv tarball
-find "$APP/Contents/Resources/bin" -mindepth 1 -maxdepth 1 ! -name uv -exec rm -rf {} +
+chmod +x "$BIN/uv"
 
 # Bundle CPython so first launch does not need GitHub to install Python.
 PY_DIR="$APP/Contents/Resources/python"

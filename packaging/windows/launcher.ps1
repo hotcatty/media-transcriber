@@ -28,7 +28,7 @@ function Copy-Diagnostics([string]$Message) {
     $lines = @(
         "转录小工具 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
-        "launcher=windows-20260910f",
+        "launcher=windows-20260910g",
         "os=$([Environment]::OSVersion.VersionString)",
         "root=$Root",
         "error=$Message",
@@ -43,6 +43,12 @@ function Copy-Diagnostics([string]$Message) {
     $text = $lines -join "`r`n"
     $diag = Join-Path $LogDir "media-transcriber-diag.txt"
     Set-Content -Path $diag -Value $text -Encoding UTF8
+    $downloads = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
+    if (-not (Test-Path $downloads)) {
+        New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+    }
+    $dl = Join-Path $downloads "转录小工具-说明.txt"
+    Set-Content -Path $dl -Value $text -Encoding UTF8
     try {
         Set-Clipboard -Value $text
     } catch { }
@@ -56,10 +62,21 @@ function Show-DiagWindow([string]$Text) {
     $form.Width = 720
     $form.Height = 560
     $form.StartPosition = "CenterScreen"
+    $panel = New-Object System.Windows.Forms.Panel
+    $panel.Dock = "Bottom"
+    $panel.Height = 44
+    $save = New-Object System.Windows.Forms.Button
+    $save.Text = "下载说明.txt"
+    $save.Width = 140
+    $save.Height = 32
+    $save.Left = 8
+    $save.Top = 6
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = "复制说明"
-    $btn.Dock = "Bottom"
-    $btn.Height = 36
+    $btn.Width = 120
+    $btn.Height = 32
+    $btn.Left = 156
+    $btn.Top = 6
     $box = New-Object System.Windows.Forms.TextBox
     $box.Multiline = $true
     $box.ScrollBars = "Both"
@@ -69,13 +86,27 @@ function Show-DiagWindow([string]$Text) {
     $box.WordWrap = $false
     $box.Text = $Text
     $btn.Tag = $box
+    $save.Tag = $box
     $btn.Add_Click({
         $src = $this.Tag
         Set-Clipboard -Value $src.Text
         $this.Text = "已复制"
     })
-    $form.Controls.Add($btn)
+    $save.Add_Click({
+        $src = $this.Tag
+        $dlg = New-Object System.Windows.Forms.SaveFileDialog
+        $dlg.Filter = "Text (*.txt)|*.txt"
+        $dlg.FileName = "转录小工具-说明.txt"
+        $dlg.InitialDirectory = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
+        if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            [IO.File]::WriteAllText($dlg.FileName, $src.Text, [Text.UTF8Encoding]::new($false))
+            $this.Text = "已保存"
+        }
+    })
+    $panel.Controls.Add($save)
+    $panel.Controls.Add($btn)
     $form.Controls.Add($box)
+    $form.Controls.Add($panel)
     [void]$form.ShowDialog()
 }
 

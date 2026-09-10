@@ -161,10 +161,19 @@ copy_exec() {
   chmod +x "$to"
 }
 
+# True if this Mac can actually execute the binary (catches ARM uv on Intel).
+runs_here() {
+  local p="$1"
+  [[ -n "$p" && -x "$p" ]] || return 1
+  "$p" --version >/dev/null 2>&1 && return 0
+  "$p" -version >/dev/null 2>&1 && return 0
+  return 1
+}
+
 build_diagnostics() {
   printf '%s\n' "转录小工具 诊断"
   printf '%s\n' "time=$(date '+%Y-%m-%d %H:%M:%S')"
-  printf '%s\n' "launcher=20260910f"
+  printf '%s\n' "launcher=20260910g"
   printf '%s\n' "arch=$ARCH"
   sw_vers 2>/dev/null | sed 's/^/sw_vers /' || true
   printf '%s\n' "here=$HERE"
@@ -172,6 +181,7 @@ build_diagnostics() {
   printf '%s\n' "resources=$RESOURCES"
   printf '%s\n' "ls_resources=$(ls "$RESOURCES" 2>/dev/null | tr '\n' ' ')"
   printf '%s\n' "ls_python=$(ls "$RESOURCES/python" 2>/dev/null | tr '\n' ' ')"
+  printf '%s\n' "uv_file=$(/usr/bin/file -b "$DATA/bin/uv" 2>/dev/null || true)"
   printf '%s\n' "error=$1"
   printf '%s\n' "---- log ----"
   if [[ -f "$LOG" ]]; then
@@ -195,14 +205,19 @@ write_diag_html() {
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; margin: 24px; color: #111; }
   h1 { font-size: 18px; margin: 0 0 8px; }
   p { color: #555; line-height: 1.5; }
-  button { font-size: 16px; padding: 8px 16px; margin: 8px 0 16px; }
+  button { font-size: 16px; padding: 8px 16px; margin: 8px 12px 16px 0; }
   textarea { width: 100%; height: 70vh; font: 13px ui-monospace, Menlo, monospace; }
 </style>
 </head>
 <body>
 <h1>转录小工具 · 说明</h1>
-<p>把下面整段发给我。不会上传到网上。如果按钮没反应，先点一下文本框，再按 Command+A、Command+C。</p>
-<p><button type="button" id="btn">复制说明</button> <span id="ok"></span></p>
+<p>不会上传到网上。跨设备发给我时，请下载成 .txt 文件再发，不要整段粘贴。</p>
+<p>「下载」文件夹里也有一份「转录小工具-说明.txt」。</p>
+<p>
+<button type="button" id="dl">下载说明.txt</button>
+<button type="button" id="btn">复制说明</button>
+<span id="ok"></span>
+</p>
 <textarea id="log" readonly>
 EOF
     sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' "$txt" | sed 's#</textarea>#&lt;/textarea&gt;#g'
@@ -210,15 +225,27 @@ EOF
 </textarea>
 <script>
 var t = document.getElementById("log");
-var btn = document.getElementById("btn");
-btn.onclick = function () {
+var name = "转录小工具-说明.txt";
+document.getElementById("dl").onclick = function () {
+  var blob = new Blob([t.value], {type: "text/plain;charset=utf-8"});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+  document.getElementById("ok").textContent = "已开始下载。也可在「下载」文件夹里找同名文件。";
+};
+document.getElementById("btn").onclick = function () {
   t.focus();
   t.select();
   var ok = false;
   try { ok = document.execCommand("copy"); } catch (e) {}
   function done() {
-    btn.textContent = "已复制";
-    document.getElementById("ok").textContent = "可以回到聊天粘贴了";
+    document.getElementById("btn").textContent = "已复制";
+    document.getElementById("ok").textContent = "可以粘贴了；跨设备请改发 .txt 文件。";
   }
   if (ok) { done(); return; }
   if (navigator.clipboard) {
@@ -237,13 +264,17 @@ fail() {
   stop_bootstrap
   local diag_file="$LOG_DIR/media-transcriber-diag.txt"
   local diag_html="$LOG_DIR/media-transcriber-diag.html"
+  local diag_dl="$HOME/Downloads/转录小工具-说明.txt"
   build_diagnostics "$*" >"$diag_file" 2>/dev/null || true
+  mkdir -p "$HOME/Downloads"
+  cp "$diag_file" "$diag_dl" 2>/dev/null || true
   write_diag_html "$diag_file" "$diag_html"
+  /usr/bin/open -R "$diag_dl" >/dev/null 2>&1 || true
   /usr/bin/open -a Safari "$diag_html" >/dev/null 2>&1 \
     || /usr/bin/open "$diag_html" >/dev/null 2>&1 \
     || /usr/bin/open -e "$diag_file" >/dev/null 2>&1 \
     || true
-  /usr/bin/osascript - "本机组件没准备好。$* 已打开说明页，点「复制说明」后发给我。" <<'APPLESCRIPT' >/dev/null 2>&1 || true
+  /usr/bin/osascript - "本机组件没准备好。$* 说明已放到「下载」里的「转录小工具-说明.txt」，把这个文件发给我即可。" <<'APPLESCRIPT' >/dev/null 2>&1 || true
 on run argv
   set msg to item 1 of argv
   try
@@ -376,48 +407,71 @@ prepare_runtime_python() {
 }
 
 ensure_uv() {
-  if [[ -x "$RESOURCES/bin/uv" ]]; then
-    copy_exec "$RESOURCES/bin/uv" "$DATA/bin/uv"
+  local dest="$DATA/bin/uv"
+  local cand
+  local cands=()
+  if [[ "$ARCH" == "x86_64" ]]; then
+    cands=("$RESOURCES/bin/uv-x86_64" "$RESOURCES/bin/uv")
+  else
+    cands=("$RESOURCES/bin/uv-arm64" "$RESOURCES/bin/uv-aarch64" "$RESOURCES/bin/uv")
+  fi
+  for cand in "${cands[@]}"; do
+    [[ -x "$cand" ]] || continue
+    log "try bundled uv $cand"
+    copy_exec "$cand" "$dest"
+    if runs_here "$dest"; then
+      return 0
+    fi
+    log "bundled uv does not run on arch=$ARCH: $cand"
+    rm -f "$dest"
+  done
+  if runs_here "$dest"; then
+    xattr -cr "$dest" 2>/dev/null || true
     return 0
   fi
-  if [[ -x "$DATA/bin/uv" ]]; then
-    xattr -cr "$DATA/bin/uv" 2>/dev/null || true
-    return 0
-  fi
+  rm -f "$dest"
   local asset="uv-aarch64-apple-darwin.tar.gz"
   [[ "$ARCH" == "x86_64" ]] && asset="uv-x86_64-apple-darwin.tar.gz"
   local tmp="$DATA/uv.tgz"
   log "download uv $asset"
   if ! github_fetch "$tmp" "https://github.com/astral-sh/uv/releases/latest/download/${asset}"; then
-    if curl -fsSL "https://astral.sh/uv/install.sh" | env UV_INSTALL_DIR="$DATA/bin" INSTALLER_NO_MODIFY_PATH=1 /bin/sh; then
-      return 0
-    fi
-    fail "没法下载运行环境。请检查网络后再打开一次「转录小工具」。"
+    log "uv download failed; pip fallback later"
+    return 1
   fi
   tar -xzf "$tmp" -C "$DATA/bin"
   rm -f "$tmp"
-  if [[ ! -x "$DATA/bin/uv" ]]; then
+  if [[ ! -x "$dest" ]]; then
     local found
     found="$(find "$DATA/bin" -name uv -type f | head -1)"
-    [[ -n "$found" ]] && cp "$found" "$DATA/bin/uv"
+    [[ -n "$found" ]] && cp "$found" "$dest"
   fi
-  chmod +x "$DATA/bin/uv" 2>/dev/null || fail "运行环境下载后无法使用。"
-  xattr -cr "$DATA/bin/uv" 2>/dev/null || true
+  chmod +x "$dest" 2>/dev/null || true
+  xattr -cr "$dest" 2>/dev/null || true
+  if runs_here "$dest"; then
+    return 0
+  fi
+  log "downloaded uv does not run"
+  rm -f "$dest"
+  return 1
 }
 
 ensure_ffmpeg() {
-  if [[ -x "$DATA/bin/ffmpeg" && -x "$DATA/bin/ffprobe" ]]; then
+  if runs_here "$DATA/bin/ffmpeg" && runs_here "$DATA/bin/ffprobe"; then
     return 0
   fi
+  rm -f "$DATA/bin/ffmpeg" "$DATA/bin/ffprobe"
   if [[ -x "$RESOURCES/bin/ffmpeg" && -x "$RESOURCES/bin/ffprobe" ]]; then
     copy_exec "$RESOURCES/bin/ffmpeg" "$DATA/bin/ffmpeg"
     copy_exec "$RESOURCES/bin/ffprobe" "$DATA/bin/ffprobe"
-    return 0
+    if runs_here "$DATA/bin/ffmpeg" && runs_here "$DATA/bin/ffprobe"; then
+      return 0
+    fi
+    rm -f "$DATA/bin/ffmpeg" "$DATA/bin/ffprobe"
   fi
   if have_cmd ffmpeg && have_cmd ffprobe; then
     local ff
     ff="$(command -v ffmpeg)"
-    if [[ "$ff" != "$DATA/bin/ffmpeg" ]]; then
+    if [[ "$ff" != "$DATA/bin/ffmpeg" ]] && runs_here "$ff"; then
       log "using system ffmpeg $ff"
       return 0
     fi
@@ -435,6 +489,9 @@ ensure_ffmpeg() {
     || fail "没法下载音频组件。请检查网络后再打开一次。"
   gunzip -f "$DATA/bin/ffmpeg.gz" "$DATA/bin/ffprobe.gz"
   chmod +x "$DATA/bin/ffmpeg" "$DATA/bin/ffprobe"
+  if ! runs_here "$DATA/bin/ffmpeg"; then
+    fail "音频组件无法在这台电脑上运行。"
+  fi
 }
 
 copy_bundled_app() {
@@ -512,11 +569,28 @@ ensure_venv() {
     log "venv python=$py"
     rm -rf "$DATA/venv"
     if ! "$py" -m venv "$DATA/venv"; then
-      "$uv" venv "$DATA/venv" --python "$py" || fail "没法创建运行环境。"
+      if runs_here "$uv"; then
+        "$uv" venv "$DATA/venv" --python "$py" || fail "没法创建运行环境。"
+      else
+        fail "没法创建运行环境。"
+      fi
     fi
   fi
   log "install python packages"
-  "$uv" pip install --python "$DATA/venv/bin/python" -r "$DATA/app/requirements.txt" \
+  local req="$DATA/app/requirements.txt"
+  local vpy="$DATA/venv/bin/python"
+  if runs_here "$uv"; then
+    if "$uv" pip install --python "$vpy" -r "$req"; then
+      return 0
+    fi
+    log "uv pip failed, try python -m pip"
+  else
+    log "uv missing or wrong cpu, use python -m pip"
+  fi
+  if ! "$vpy" -m pip --version >>"$LOG" 2>&1; then
+    "$vpy" -m ensurepip --upgrade >>"$LOG" 2>&1 || true
+  fi
+  "$vpy" -m pip install -r "$req" >>"$LOG" 2>&1 \
     || fail "没法安装依赖。请检查网络后再打开一次。"
 }
 
@@ -551,7 +625,7 @@ wait_ready() {
   fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
 }
 
-log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910f resources=$RESOURCES"
+log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=20260910g resources=$RESOURCES"
 ensure_uv
 refresh_app
 ensure_venv
