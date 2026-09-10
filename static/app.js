@@ -12,8 +12,121 @@ let jobCollapsed = false;
 
 let etaTimer = null;
 let remainFloor = { id: null, value: null };
+let startGen = 0;
+
+const SERVICE_SCHEME = "media-transcriber://open";
+const SERVICE_ZIP = "https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-macOS.zip";
 
 const $ = (id) => document.getElementById(id);
+
+function isMacDesktop() {
+  const ua = navigator.userAgent || "";
+  return /Mac/i.test(ua) && !/iPhone|iPad|iPod/i.test(ua);
+}
+
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(ms);
+  }
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), ms);
+  return ctrl.signal;
+}
+
+async function serviceState() {
+  const base = window.MT_API || "";
+  try {
+    const r = await fetch(`${base}/api/ping`, {
+      mode: base ? "cors" : "same-origin",
+      cache: "no-store",
+      signal: timeoutSignal(900),
+    });
+    if (!r.ok) return "down";
+    const j = await r.json();
+    if (!(j && j.ok && j.app === "media-transcriber")) return "down";
+    return j.preparing ? "starting" : "ready";
+  } catch (_) {
+    return "down";
+  }
+}
+
+function startLocalService() {
+  const frame = document.createElement("iframe");
+  frame.style.display = "none";
+  frame.src = SERVICE_SCHEME;
+  document.body.appendChild(frame);
+  setTimeout(() => frame.remove(), 4000);
+}
+
+function fetchServicePackage() {
+  if (!isMacDesktop()) return;
+  const a = document.createElement("a");
+  a.href = SERVICE_ZIP;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function paintFirstUse(url) {
+  currentTask = {
+    status: "running",
+    title: url,
+    source: url,
+    steps: [
+      { id: "model", label: "下载turbo模型", state: "current", size: "0M / 1.6G" },
+      { id: "parse", label: "解析视频", state: "pending" },
+      { id: "download", label: "下载音频", state: "pending" },
+      { id: "transcribe", label: "语音识别", state: "pending" },
+      { id: "finalize", label: "整理文稿", state: "pending" },
+    ],
+  };
+  renderJob(currentTask);
+  startEtaClock();
+}
+
+function paintParsePending(url) {
+  currentTask = {
+    status: "running",
+    title: url,
+    source: url,
+    steps: [
+      { id: "parse", label: "解析链接", state: "current", eta_seconds: 12, eta_deadline: Date.now() / 1000 + 12 },
+      { id: "download", label: "下载音频", state: "pending" },
+      { id: "transcribe", label: "语音识别", state: "pending" },
+      { id: "finalize", label: "整理文稿", state: "pending" },
+    ],
+  };
+  renderJob(currentTask);
+  startEtaClock();
+}
+
+async function waitUntilReady(ms, retrigger) {
+  const gen = startGen;
+  const until = Date.now() + ms;
+  let lastStart = Date.now();
+  while (Date.now() < until) {
+    if (gen !== startGen) return false;
+    if (await serviceState() === "ready") return true;
+    if (retrigger && Date.now() - lastStart > 20000) {
+      startLocalService();
+      lastStart = Date.now();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  return false;
+}
+
+async function bringServiceUp(url) {
+  startGen += 1;
+  const gen = startGen;
+  paintFirstUse(url);
+  if (await waitUntilReady(8000, false)) return true;
+  if (gen !== startGen) return false;
+  fetchServicePackage();
+  startLocalService();
+  return waitUntilReady(10 * 60 * 1000, true);
+}
 
 function formatRemain(seconds) {
   if (seconds == null || Number.isNaN(Number(seconds))) return "";
@@ -260,6 +373,7 @@ function syncUrlClear() {
 }
 
 function resetToIdle() {
+  startGen += 1;
   stopSSE();
   currentTaskId = null;
   currentTask = null;
@@ -518,6 +632,20 @@ function stopSSE() {
   }
 }
 
+async function postTranscribe(url) {
+  const fd = new FormData();
+  fd.append("url", url);
+  const resp = await fetch(mtApi("/api/transcribe"), { method: "POST", body: fd });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(detailText(data, `HTTP ${resp.status}`));
+  if (data.status === "completed" && data.task_id) {
+    const r = await fetch(mtApi(`/api/tasks/${data.task_id}`));
+    if (r.ok) applyTask(await r.json());
+    return;
+  }
+  startSSE(data.task_id);
+}
+
 async function submitUrl(url) {
   if (!isValidShareUrl(url)) {
     showToast("请输入正确格式的网址");
@@ -526,40 +654,55 @@ async function submitUrl(url) {
   jobCollapsed = false;
   autoOpenedId = null;
   setBusy(true);
-  const pending = {
-    status: "running",
-    title: url,
-    source: url,
-    steps: [
-      { id: "parse", label: "解析链接", state: "current", eta_seconds: 12, eta_deadline: Date.now() / 1000 + 12 },
-      { id: "download", label: "下载音频", state: "pending" },
-      { id: "transcribe", label: "语音识别", state: "pending" },
-      { id: "finalize", label: "整理文稿", state: "pending" },
-    ],
-  };
-  currentTask = pending;
-  renderJob(pending);
-  startEtaClock();
+  if (window.MT_API) startLocalService();
   try {
-    const fd = new FormData();
-    fd.append("url", url);
-    const resp = await fetch(mtApi("/api/transcribe"), { method: "POST", body: fd });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(detailText(data, `HTTP ${resp.status}`));
-    if (data.status === "completed" && data.task_id) {
-      const r = await fetch(mtApi(`/api/tasks/${data.task_id}`));
-      if (r.ok) applyTask(await r.json());
-      return;
+    if (window.MT_API && (await serviceState()) !== "ready") {
+      const up = await bringServiceUp(url);
+      if (!up) {
+        if (!currentTask) return;
+        paintFirstUse(url);
+        return;
+      }
+    } else {
+      paintParsePending(url);
     }
-    startSSE(data.task_id);
+    await postTranscribe(url);
   } catch (e) {
-    setBusy(false);
-    const msg = e.message || "请输入正确格式的网址";
+    const msg = e.message || "";
     if (loginRequiredMsg(msg)) {
+      setBusy(false);
       currentTask = asNeedsLogin({ title: url, source: url });
       renderJob(currentTask);
       return;
     }
+    if (window.MT_API && isNetworkDown(msg)) {
+      const up = await bringServiceUp(url);
+      if (up) {
+        try {
+          await postTranscribe(url);
+          return;
+        } catch (retryErr) {
+          if (loginRequiredMsg(retryErr.message || "")) {
+            setBusy(false);
+            currentTask = asNeedsLogin({ title: url, source: url });
+            renderJob(currentTask);
+            return;
+          }
+          if (isNetworkDown(retryErr.message || "")) {
+            if (currentTask) paintFirstUse(url);
+            return;
+          }
+          setBusy(false);
+          renderJob(null);
+          showToast(retryErr.message || msg);
+          return;
+        }
+      }
+      if (!currentTask) return;
+      paintFirstUse(url);
+      return;
+    }
+    setBusy(false);
     renderJob(null);
     showToast(msg);
   }

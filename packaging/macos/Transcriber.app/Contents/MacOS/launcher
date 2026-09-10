@@ -1,7 +1,15 @@
 #!/bin/bash
 # 转录小工具 · 本机助手
-# 网页点「开始使用」或双击本程序时运行：准备环境、拉起本地服务、打开浏览器。
+# 网页点转录或双击本程序时运行：准备环境、拉起本地服务。
+# 从 media-transcriber:// 唤起时只启动服务，不把浏览器跳到 localhost。
 set -u
+
+SCHEME_LAUNCH=0
+for arg in "$@"; do
+  case "$arg" in
+    media-transcriber://*) SCHEME_LAUNCH=1 ;;
+  esac
+done
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RESOURCES="$ROOT/Contents/Resources"
@@ -39,9 +47,16 @@ open_app() {
   /usr/bin/open "$LOCAL"
 }
 
+maybe_open_app() {
+  if [[ "$SCHEME_LAUNCH" == 1 ]]; then
+    return 0
+  fi
+  open_app
+}
+
 if helper_ready; then
   log "already running"
-  open_app
+  maybe_open_app
   exit 0
 fi
 
@@ -75,24 +90,67 @@ start_bootstrap() {
   if curl -fsS --max-time 1 "${LOCAL}/api/ping" >/dev/null 2>&1; then
     return 0
   fi
+  local py="/usr/bin/python3"
+  if command -v python3 >/dev/null 2>&1; then
+    py="$(command -v python3)"
+  fi
   (
-    while true; do
-      {
-        printf 'HTTP/1.1 200 OK\r\n'
-        printf 'Content-Type: text/html; charset=utf-8\r\n'
-        printf 'Connection: close\r\n'
-        printf 'Access-Control-Allow-Origin: *\r\n'
-        printf '\r\n'
-        cat "$WAITING"
-      } | nc -l 127.0.0.1 "$PORT" >/dev/null 2>&1 || break
-    done
+    PORT="$PORT" WAITING="$WAITING" "$py" - <<'PY'
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+PORT = int(os.environ["PORT"])
+waiting_path = Path(os.environ.get("WAITING", ""))
+WAITING = waiting_path.read_bytes() if waiting_path.is_file() else b""
+PING = b'{"ok":true,"app":"media-transcriber","preparing":true}'
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        return
+
+    def _cors(self):
+        origin = self.headers.get("Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            self.headers.get("Access-Control-Request-Headers", "*"),
+        )
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/api/ping":
+            body = PING
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self._cors()
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self._cors()
+        self.send_header("Content-Length", str(len(WAITING)))
+        self.end_headers()
+        self.wfile.write(WAITING)
+
+ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+PY
   ) &
   BOOT_PID="$!"
 }
 
 notify "正在打开" "第一次准备大约需要几分钟，之后打开网址就能用。"
 start_bootstrap
-open_app
+maybe_open_app
 
 fail() {
   log "ERROR: $*"
@@ -256,6 +314,6 @@ ensure_ffmpeg
 start_server
 wait_ready
 notify "已经准备好" "可以开始把链接转成逐字稿了。"
-open_app
+maybe_open_app
 log "launch ok"
 exit 0
