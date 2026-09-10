@@ -21,13 +21,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+import config
+
 logger = logging.getLogger(__name__)
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 media-transcriber"
 
-DEFAULT_MODELS_DIR = Path(
-    os.getenv("MT_MODELS_DIR", Path.home() / ".cache" / "media-transcriber" / "models")
-)
+DEFAULT_MODELS_DIR = config.MODELS_DIR
 
 
 @dataclass

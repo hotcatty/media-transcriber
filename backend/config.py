@@ -3,9 +3,54 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# turbo is ~1.6G; leave a little headroom so a nearly-full disk is skipped.
+_MODEL_NEED_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def default_models_dir() -> Path:
+    """Where Whisper weights live.
+
+    Mac/Linux: ~/.cache/media-transcriber/models
+    Windows: a fixed drive that is not C: when one has enough space
+    (D:\\media-transcriber\\models, or the roomiest other disk). Only C: is
+    used when there is no other suitable drive.
+    """
+    override = os.getenv("MT_MODELS_DIR")
+    if override:
+        return Path(override)
+    if platform.system() != "Windows":
+        return Path.home() / ".cache" / "media-transcriber" / "models"
+    return _windows_models_dir()
+
+
+def _windows_models_dir() -> Path:
+    import ctypes
+
+    get_drive_type = ctypes.windll.kernel32.GetDriveTypeW
+    drive_fixed = 3
+    scored: list[tuple[int, int, str]] = []
+    for code in range(ord("D"), ord("Z") + 1):
+        letter = chr(code)
+        root = f"{letter}:\\"
+        if get_drive_type(root) != drive_fixed:
+            continue
+        try:
+            free = shutil.disk_usage(root).free
+        except OSError:
+            continue
+        if free < _MODEL_NEED_BYTES:
+            continue
+        scored.append((0 if letter == "D" else 1, -free, letter))
+    if scored:
+        scored.sort()
+        return Path(f"{scored[0][2]}:/media-transcriber/models")
+    return Path.home() / ".cache" / "media-transcriber" / "models"
+
 
 TEMP_DIR = Path(os.getenv("MT_TEMP_DIR", PROJECT_ROOT / "temp"))
 TRANSCRIPTS_DIR = TEMP_DIR / "transcripts"
@@ -14,9 +59,7 @@ UPLOAD_DIR = TEMP_DIR / "uploads"
 TASKS_INDEX = TEMP_DIR / "tasks.json"
 COOKIE_FILE = Path(os.getenv("MT_COOKIE_FILE", PROJECT_ROOT / "cookies.txt"))
 
-MODELS_DIR = Path(
-    os.getenv("MT_MODELS_DIR", Path.home() / ".cache" / "media-transcriber" / "models")
-)
+MODELS_DIR = default_models_dir()
 
 HOST = os.getenv("MT_HOST", "127.0.0.1")
 PORT = int(os.getenv("MT_PORT", "8766"))

@@ -138,6 +138,23 @@ function loginRequiredMsg(msg) {
   return /登录状态|需要登录后|sign in|not a bot|login required|cookies are needed|use --cookies/.test(low);
 }
 
+function isNetworkDown(msg) {
+  return /failed to fetch|networkerror|load failed|network request failed|failed to load|the network connection was lost|network error|err_connection|econnrefused|ns_error/i.test(String(msg || ""));
+}
+
+function humanizeError(raw) {
+  const msg = String(raw || "").trim();
+  if (!msg) return "出了点问题，请稍后再试";
+  if (isUrlFormatError(msg)) return "请输入正确格式的网址";
+  if (isNetworkDown(msg)) return "连不上本机转录服务，暂时没法开始转";
+  if (/^HTTP\s*[45]\d\d/i.test(msg) || /internal server error|bad gateway|service unavailable/i.test(msg)) {
+    return "本机服务出了点问题，暂时没法完成";
+  }
+  if (/abort|the operation was aborted/i.test(msg)) return "请求中断了，请再试一次";
+  if (/[\u4e00-\u9fff]/.test(msg)) return msg;
+  return "出了点问题，暂时没法完成这一步";
+}
+
 const LOGIN_PARSE_HINT = "该视频需在登录状态下才能解析";
 const CHARGE_NEED_LOGIN_HINT = "该视频为充电视频，请读取已充电账号的登录状态";
 
@@ -161,8 +178,9 @@ const toastedKeys = new Set();
 function showToast(text, onceKey) {
   const el = $("toast");
   if (!el) return;
-  const msg = text || "请输入正确格式的网址";
-  if (loginRequiredMsg(msg)) return;
+  const incoming = String(text || "").trim();
+  if (loginRequiredMsg(incoming)) return;
+  const msg = humanizeError(incoming || "出了点问题，请稍后再试");
   if (onceKey) {
     if (toastedKeys.has(onceKey)) return;
     toastedKeys.add(onceKey);
@@ -543,7 +561,7 @@ async function submitUrl(url) {
       return;
     }
     renderJob(null);
-    showToast(isUrlFormatError(msg) ? "请输入正确格式的网址" : msg);
+    showToast(msg);
   }
 }
 

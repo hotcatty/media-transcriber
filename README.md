@@ -44,7 +44,8 @@ Mac 助手的打包脚本：`packaging/build-macos-zip.sh`。
 | 历史和文稿（助手安装） | `~/Library/Application Support/media-transcriber/temp` |
 | 登录 Cookie（助手安装） | `~/Library/Application Support/media-transcriber/cookies.txt` |
 | 历史和文稿（源码运行） | 项目里的 `temp/` |
-| 模型权重 | `~/.cache/media-transcriber/models` |
+| 模型权重（Mac / Linux） | `~/.cache/media-transcriber/models` |
+| 模型权重（Windows） | 有 D 盘等非 C 盘时用 `D:\media-transcriber\models`；只有 C 盘才落到用户目录缓存 |
 
 这些路径都已加入 `.gitignore`。
 
