@@ -28,10 +28,16 @@ function isWindowsDesktop() {
   return /Windows|Win64|Win32/i.test(navigator.userAgent || "");
 }
 
-function servicePlatform() {
+let serviceChoice = "";
+
+function detectedServicePlatform() {
   if (isMacDesktop()) return "mac";
   if (isWindowsDesktop()) return "win";
-  return "other";
+  return "";
+}
+
+function currentServicePlatform() {
+  return serviceChoice || detectedServicePlatform();
 }
 
 function timeoutSignal(ms) {
@@ -64,15 +70,20 @@ const SERVICE_LEAD = "仅首次使用需要安装，所有功能均在本地运�
 const SERVICE_LEAD_OTHER = "目前测试包支持 Mac 和 Windows。请用电脑打开这一页后再下载。";
 
 function paintServiceGuide() {
-  const platform = servicePlatform();
+  const platform = currentServicePlatform();
   const lead = $("serviceLead");
-  if (lead) lead.textContent = platform === "other" ? SERVICE_LEAD_OTHER : SERVICE_LEAD;
+  if (lead) lead.textContent = platform ? SERVICE_LEAD : SERVICE_LEAD_OTHER;
   const show = (id, on) => {
     const el = $(id);
     if (el) el.hidden = !on;
   };
   show("serviceGuideMac", platform === "mac");
   show("serviceGuideWin", platform === "win");
+  document.querySelectorAll("[data-service-os]").forEach((btn) => {
+    const on = btn.getAttribute("data-service-os") === platform;
+    btn.classList.toggle("is-on", on);
+    btn.setAttribute("aria-pressed", String(on));
+  });
 }
 
 function openServiceGuide() {
@@ -81,7 +92,7 @@ function openServiceGuide() {
 }
 
 function fetchServicePackage() {
-  const platform = servicePlatform();
+  const platform = currentServicePlatform();
   const zip = platform === "mac" ? SERVICE_ZIP_MAC : platform === "win" ? SERVICE_ZIP_WIN : "";
   if (!zip) return false;
   const a = document.createElement("a");
@@ -1135,6 +1146,15 @@ document.addEventListener("DOMContentLoaded", () => {
   $("helpClose").onclick = () => closeOverlay("helpOverlay");
   $("sheetClose").onclick = () => closeOverlay("transcriptOverlay");
   $("serviceClose").onclick = () => closeOverlay("serviceOverlay");
+  document.querySelectorAll("[data-service-os]").forEach((btn) => {
+    btn.onclick = () => {
+      const next = btn.getAttribute("data-service-os");
+      if (!next || next === currentServicePlatform()) return;
+      serviceChoice = next;
+      paintServiceGuide();
+      fetchServicePackage();
+    };
+  });
 
   $("loginInfoBtn").onclick = (e) => {
     e.stopPropagation();

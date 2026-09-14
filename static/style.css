@@ -417,6 +417,15 @@ img.step-ico.is-spin {
   margin: 0;
   line-height: normal;
 }
+.service-os {
+  display: flex;
+  gap: 24px;
+}
+.service-os .link.is-on {
+  color: #000;
+  text-decoration: none;
+  pointer-events: none;
+}
 .service-steps {
   margin: 0;
   padding: 0;
