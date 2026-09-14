@@ -7,9 +7,9 @@
     </button>`;
   }
 
-  function infoBtn(attrs) {
+  function infoBtn(attrs, aria) {
     return iconBtn({
-      aria: "了解读取流程",
+      aria: aria || "了解读取流程",
       src: "/static/img/icon-info.svg",
       size: 20,
       extra: "icon-btn--sm",

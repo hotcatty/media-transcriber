@@ -318,7 +318,9 @@ function humanizeError(raw) {
 }
 
 const LOGIN_PARSE_HINT = "该视频需在登录状态下才能解析";
+const LOGIN_NEED_TIP = "没有登录时拿不到可解析的地址，需要读取本机已有的登录状态。";
 const CHARGE_NEED_LOGIN_HINT = "该视频为充电视频，请读取已充电账号的登录状态";
+const CHARGE_NEED_TIP = "充电内容只对已充电账号开放，需要读取那个账号的登录状态。";
 
 function asNeedsLogin(task) {
   const steps = Array.isArray(task.steps) ? task.steps.map((s) => (
@@ -568,9 +570,12 @@ function renderJob(task) {
     body = `<ul class="steps">${steps.map((s) => {
       let extra = "";
       if (s.state === "needs_login") {
+        const charged = s.id === "download" || /充电/.test(s.hint || "");
+        const tip = charged ? CHARGE_NEED_TIP : LOGIN_NEED_TIP;
         extra = `<div class="step-login">
-          <span class="need">${escapeHtml(s.hint || (s.id === "download" ? CHARGE_NEED_LOGIN_HINT : LOGIN_PARSE_HINT))}
-            ${UI.infoBtn(`data-inline-info="1"`)}
+          <span class="need">${escapeHtml(s.hint || (charged ? CHARGE_NEED_LOGIN_HINT : LOGIN_PARSE_HINT))}
+            ${UI.infoBtn(`data-inline-info="1"`, "为什么需要登录")}
+            <span class="need-tip" role="tooltip">${escapeHtml(tip)}</span>
           </span>
           <button type="button" class="link" data-open-login="1">读取登录状态</button>
         </div>`;
@@ -1124,9 +1129,13 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     if (e.target.closest("[data-inline-info]")) {
-      openLogin();
-      $("loginInfoPop").hidden = false;
-      $("loginInfoBtn").setAttribute("aria-expanded", "true");
+      e.stopPropagation();
+      const need = e.target.closest(".need");
+      document.querySelectorAll(".need.is-open").forEach((el) => {
+        if (el !== need) el.classList.remove("is-open");
+      });
+      if (need) need.classList.toggle("is-open");
+      return;
     }
   });
 
@@ -1180,6 +1189,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("click", (e) => {
     if (!e.target.closest(".export")) $("exportMenu").hidden = true;
     if (!e.target.closest(".hist-more-wrap")) closeHistMenus();
+    if (!e.target.closest(".need")) {
+      document.querySelectorAll(".need.is-open").forEach((el) => el.classList.remove("is-open"));
+    }
   });
 
   $("historyList").addEventListener("keydown", (e) => {
