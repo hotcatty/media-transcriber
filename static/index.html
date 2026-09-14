@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=service-guide18">
-  <link rel="stylesheet" href="/static/style.css?v=service-guide18">
+  <link rel="stylesheet" href="/static/ui.css?v=service-guide19">
+  <link rel="stylesheet" href="/static/style.css?v=service-guide19">
 </head>
 <body>
   <div class="stage">
@@ -56,7 +56,19 @@
         </label>
         <button type="button" class="btn btn--solid" id="importCookieBtn">点击读取</button>
       </div>
-      <p class="login-msg" id="loginMsg" hidden></p>
+    </div>
+  </div>
+
+  <div class="overlay" id="readFailOverlay" hidden>
+    <div class="modal modal-sm" role="dialog" aria-labelledby="readFailTitle">
+      <div class="modal-head">
+        <h2 id="readFailTitle">读取失败</h2>
+        <button type="button" class="icon-btn" id="readFailClose" aria-label="关闭">
+          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+        </button>
+      </div>
+      <p class="modal-lead" id="readFailBody">请再读取一次。</p>
+      <button type="button" class="btn btn--solid" id="readFailRetry">再读取一次</button>
     </div>
   </div>
 
@@ -132,6 +144,7 @@
       </div>
       <div class="service-copy">
         <p class="modal-lead" id="serviceLead">仅首次使用需要安装，所有功能均在本地运行，不涉及隐私问题。</p>
+        <a class="link" id="serviceZipLink" href="#" rel="noopener" hidden>如果没有开始下载，点这里下载安装包</a>
         <div class="service-os" role="group" aria-label="选择系统">
           <button type="button" class="link" data-service-os="mac">Mac</button>
           <button type="button" class="link" data-service-os="win">Windows</button>
@@ -173,10 +186,25 @@
     </div>
   </div>
 
+  <div class="overlay" id="logOverlay" hidden>
+    <div class="modal modal-sm" role="dialog" aria-labelledby="logTitle">
+      <div class="modal-head">
+        <h2 id="logTitle">操作日志</h2>
+        <button type="button" class="icon-btn" id="logClose" aria-label="关闭">
+          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+        </button>
+      </div>
+      <p class="modal-lead">日志只留在这台电脑上，不会自动上传，也没有 Cookie 或账号密码。下载后发给我们就行。</p>
+      <button type="button" class="btn btn--solid" id="logDownload">下载日志</button>
+    </div>
+  </div>
+
+  <button type="button" class="link link--on-dark log-fab" id="logBtn">反馈操作日志</button>
+
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=service-guide18"></script>
-  <script src="/static/ui.js?v=service-guide18"></script>
-  <script src="/static/app.js?v=service-guide18"></script>
+  <script src="/static/config.js?v=service-guide19"></script>
+  <script src="/static/ui.js?v=service-guide19"></script>
+  <script src="/static/app.js?v=service-guide19"></script>
 </body>
 </html>

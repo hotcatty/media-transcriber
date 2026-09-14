@@ -51,6 +51,13 @@ body {
   min-height: 100%;
   padding: 0 24px;
 }
+.log-fab {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  z-index: 30;
+  font-size: 14px;
+}
 
 .desk {
   --desk-top: calc((100vh - 950 * var(--s)) / 2 + var(--desk-y) * var(--s));
@@ -458,12 +465,10 @@ img.step-ico.is-spin {
   padding: 0 12px;
   flex-wrap: wrap;
 }
-.login-msg {
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--danger);
+#readFailRetry,
+#logDownload {
+  align-self: flex-start;
 }
-.login-msg.ok { color: #1a7f4b; }
 
 .sheet-chrome {
   flex: none;

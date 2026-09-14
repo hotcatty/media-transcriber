@@ -19,6 +19,65 @@ const SERVICE_ZIP_WIN = "https://github.com/hotcatty/media-transcriber/releases/
 
 const $ = (id) => document.getElementById(id);
 
+const OP_LOG_MAX = 240;
+const opLog = [];
+
+function safeUrl(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  try {
+    const u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`);
+    return `${u.host}${u.pathname}`.slice(0, 180);
+  } catch (_) {
+    return "url";
+  }
+}
+
+function opNote(event, detail) {
+  const row = { t: new Date().toISOString(), event: String(event || "") };
+  if (detail && typeof detail === "object") {
+    Object.keys(detail).forEach((k) => {
+      if (/cookie|password|token|secret|sess/i.test(k)) return;
+      const v = detail[k];
+      if (v == null) return;
+      row[k] = typeof v === "string" ? v.slice(0, 240) : v;
+    });
+  }
+  opLog.push(row);
+  if (opLog.length > OP_LOG_MAX) opLog.shift();
+}
+
+function opLogText() {
+  const head = [
+    "转录小工具 操作日志",
+    `导出时间 ${new Date().toISOString()}`,
+    `页面 ${safeUrl(location.href) || location.pathname}`,
+    `检测系统 ${detectedServicePlatform() || "未知"}`,
+    `当前选择 ${currentServicePlatform() || "无"}`,
+    `本机接口 ${window.MT_API ? "已指向本机" : "未指向"}`,
+    `浏览器 ${String(navigator.userAgent || "").slice(0, 240)}`,
+    "",
+  ];
+  const lines = opLog.map((row) => {
+    const { t, event, ...rest } = row;
+    const extra = Object.keys(rest).length ? ` ${JSON.stringify(rest)}` : "";
+    return `${t}  ${event}${extra}`;
+  });
+  return head.concat(lines).join("\n");
+}
+
+function downloadOpLog() {
+  const blob = new Blob([opLogText()], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "转录小工具-操作日志.txt";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  opNote("log.downloaded", { lines: opLog.length });
+}
+
 function isMacDesktop() {
   const ua = navigator.userAgent || "";
   return /Mac/i.test(ua) && !/iPhone|iPad|iPod/i.test(ua);
@@ -85,6 +144,15 @@ function paintServiceGuide() {
   };
   show("serviceGuideMac", platform === "mac");
   show("serviceGuideWin", platform === "win");
+  const zipLink = $("serviceZipLink");
+  const zip = serviceZipFor(platform);
+  if (zipLink) {
+    zipLink.hidden = !zip;
+    if (zip) {
+      zipLink.href = zip;
+      zipLink.target = "_blank";
+    }
+  }
   document.querySelectorAll("[data-service-os]").forEach((btn) => {
     const on = btn.getAttribute("data-service-os") === platform;
     btn.classList.toggle("is-on", on);
@@ -97,20 +165,31 @@ function openServiceGuide() {
   openOverlay("serviceOverlay");
 }
 
+function serviceZipFor(platform) {
+  if (platform === "mac") return SERVICE_ZIP_MAC;
+  if (platform === "win") return SERVICE_ZIP_WIN;
+  return "";
+}
+
 function fetchServicePackage() {
   const platform = currentServicePlatform();
-  const zip = platform === "mac" ? SERVICE_ZIP_MAC : platform === "win" ? SERVICE_ZIP_WIN : "";
-  if (!zip) return false;
-  const a = document.createElement("a");
-  a.href = zip;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  const zip = serviceZipFor(platform);
+  if (!zip) {
+    opNote("download.skip", { reason: "no-package", platform });
+    return false;
+  }
+  let opened = false;
+  try {
+    opened = !!window.open(zip, "_blank", "noopener");
+  } catch (err) {
+    opNote("download.open-error", { platform, message: String(err && err.message || err) });
+  }
+  opNote("download.start", { platform, zip, opened });
   return true;
 }
 
 function goDownloadService() {
+  opNote("download.click", { platform: currentServicePlatform() });
   fetchServicePackage();
   openServiceGuide();
 }
@@ -135,6 +214,7 @@ function paintFirstUse(url) {
   };
   renderJob(currentTask);
   startEtaClock();
+  opNote("first-use", { host: safeUrl(url), platform: currentServicePlatform() });
 }
 
 function paintParsePending(url) {
@@ -713,6 +793,7 @@ async function submitUrl(url) {
   jobCollapsed = false;
   autoOpenedId = null;
   setBusy(true);
+  opNote("submit", { host: safeUrl(url), service: window.MT_API ? "remote" : "same-origin" });
   try {
     if (window.MT_API && (await serviceState()) !== "ready") {
       const up = await bringServiceUp(url);
@@ -769,22 +850,25 @@ async function submitUrl(url) {
 function openOverlay(id) { $(id).hidden = false; }
 function closeOverlay(id) { $(id).hidden = true; }
 
-function setLoginMsg(text, ok) {
-  const el = $("loginMsg");
-  if (!text) {
-    el.hidden = true;
-    el.textContent = "";
-    return;
-  }
-  el.hidden = false;
-  el.textContent = text;
-  el.classList.toggle("ok", !!ok);
+function showReadFail(msg) {
+  const body = $("readFailBody");
+  const text = String(msg || "读取失败，请再试一次");
+  if (body) body.textContent = text;
+  closeOverlay("loginOverlay");
+  openOverlay("readFailOverlay");
+  opNote("cookies.fail", { message: text });
+}
+
+function retryReadLogin() {
+  closeOverlay("readFailOverlay");
+  openLogin();
+  opNote("cookies.retry", {});
 }
 
 function openLogin() {
-  setLoginMsg("");
   const tip = $("loginInfoBtn") && $("loginInfoBtn").closest(".has-tip");
   if (tip) tip.classList.remove("is-open");
+  closeOverlay("readFailOverlay");
   openOverlay("loginOverlay");
 }
 
@@ -817,7 +901,7 @@ async function importCookies() {
   const browser = $("browserSelect").value;
   btn.disabled = true;
   btn.textContent = "正在读取…";
-  setLoginMsg("");
+  opNote("cookies.read", { browser, site: loginSite });
   try {
     const fd = new FormData();
     fd.append("browser", browser);
@@ -826,24 +910,23 @@ async function importCookies() {
     const data = await resp.json().catch(() => ({}));
     const msg = detailText(data, "读取失败");
     if (!resp.ok) {
-      setLoginMsg(msg, false);
+      showReadFail(msg);
       return;
     }
-    setLoginMsg(data.message || "已读取", true);
+    opNote("cookies.ok", { browser, site: loginSite });
     closeOverlay("loginOverlay");
     if (currentTaskId) {
       const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/resume`), { method: "POST" });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setLoginMsg(detailText(body, "无法继续解析"), false);
-        openOverlay("loginOverlay");
+        showReadFail(detailText(body, "无法继续解析"));
         return;
       }
       setBusy(true);
       startSSE(currentTaskId);
     }
   } catch (_) {
-    setLoginMsg("读取失败，请确认本机服务还在运行", false);
+    showReadFail("读取失败，请确认本机服务还在运行");
   } finally {
     btn.disabled = false;
     btn.textContent = "点击读取";
@@ -1076,14 +1159,12 @@ function runLabScene(scene) {
   }
   if (scene === "login-fail") {
     applyTask(asNeedsLogin(sample));
-    openLogin();
-    setLoginMsg("看起来还没在 Chrome 登录B站。请先打开 bilibili.com 并登录，再回来点读取", false);
+    showReadFail("看起来还没在 Chrome 登录B站。请先打开 bilibili.com 并登录，再回来点读取");
     return true;
   }
   if (scene === "login-lock") {
     applyTask(asNeedsLogin(sample));
-    openLogin();
-    setLoginMsg("请先完全退出 Chrome 再点一次", false);
+    showReadFail("请先完全退出 Chrome 再点一次");
     return true;
   }
   if (scene === "charge") {
@@ -1105,6 +1186,11 @@ function runLabScene(scene) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  opNote("boot", {
+    platform: detectedServicePlatform() || "unknown",
+    api: window.MT_API ? "on" : "off",
+    path: location.pathname,
+  });
   loadBrowsers();
   syncUrlClear();
 
@@ -1188,9 +1274,22 @@ document.addEventListener("DOMContentLoaded", () => {
   paintServiceGuide();
   $("historyClose").onclick = () => closeOverlay("historyOverlay");
   $("loginClose").onclick = () => closeOverlay("loginOverlay");
+  $("readFailClose").onclick = () => closeOverlay("readFailOverlay");
+  $("readFailRetry").onclick = retryReadLogin;
   $("sheetClose").onclick = () => closeOverlay("transcriptOverlay");
   $("serviceClose").onclick = () => closeOverlay("serviceOverlay");
   if ($("labClose")) $("labClose").onclick = () => closeOverlay("labOverlay");
+  $("logBtn").onclick = () => {
+    opNote("log.open", { lines: opLog.length });
+    openOverlay("logOverlay");
+  };
+  $("logClose").onclick = () => closeOverlay("logOverlay");
+  $("logDownload").onclick = downloadOpLog;
+  if ($("serviceZipLink")) {
+    $("serviceZipLink").addEventListener("click", () => {
+      opNote("download.link", { platform: currentServicePlatform(), href: $("serviceZipLink").href });
+    });
+  }
   document.querySelectorAll("[data-service-os]").forEach((btn) => {
     btn.onclick = () => {
       const next = btn.getAttribute("data-service-os");
@@ -1225,7 +1324,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.querySelector(".stage").addEventListener("click", (e) => {
-    if (e.target.closest(".card, #historyBtn")) return;
+    if (e.target.closest(".card, #historyBtn, #logBtn")) return;
     collapseJob();
   });
 
