@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=service-guide11">
-  <link rel="stylesheet" href="/static/style.css?v=service-guide11">
+  <link rel="stylesheet" href="/static/ui.css?v=service-guide12">
+  <link rel="stylesheet" href="/static/style.css?v=service-guide12">
 </head>
 <body>
   <div class="stage">
@@ -41,14 +41,14 @@
         </button>
       </div>
       <p class="modal-lead">
-        将读取你选的浏览器里已经有的登录状态，用于解析登录后才能看的视频。读的不是账号密码，也不会发到网上。
-        <button type="button" class="icon-btn icon-btn--sm" id="loginInfoBtn" aria-label="了解读取流程" aria-expanded="false">
-          <img src="/static/img/icon-info.svg" alt="" width="20" height="20">
-        </button>
+        将读取浏览器中已经有的登录 Cookie，用于解析登录后才能查看的视频，这不会暴露您的隐私。
+        <span class="has-tip">
+          <button type="button" class="icon-btn icon-btn--sm" id="loginInfoBtn" aria-label="为什么不会暴露隐私">
+            <img src="/static/img/icon-info.svg" alt="" width="20" height="20">
+          </button>
+          <span class="need-tip" role="tooltip">登录 Cookie 只留在这台电脑上给解析用，不会上传，也读不到账号密码。</span>
+        </span>
       </p>
-      <div class="info-pop" id="loginInfoPop" hidden>
-        点「点击读取」后，程序只在这台电脑上查看你选的浏览器里有没有该网站的登录 Cookie，拷一份给解析用。不是账号密码，也不会发到网上。没登录、无痕或没保存登录会读不到。
-      </div>
       <div class="login-row">
         <label class="field">
           <span>选择浏览器</span>
@@ -164,8 +164,8 @@
 
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=service-guide11"></script>
-  <script src="/static/ui.js?v=service-guide11"></script>
-  <script src="/static/app.js?v=service-guide11"></script>
+  <script src="/static/config.js?v=service-guide12"></script>
+  <script src="/static/ui.js?v=service-guide12"></script>
+  <script src="/static/app.js?v=service-guide12"></script>
 </body>
 </html>

@@ -573,7 +573,7 @@ function renderJob(task) {
         const charged = s.id === "download" || /充电/.test(s.hint || "");
         const tip = charged ? CHARGE_NEED_TIP : LOGIN_NEED_TIP;
         extra = `<div class="step-login">
-          <span class="need">${escapeHtml(s.hint || (charged ? CHARGE_NEED_LOGIN_HINT : LOGIN_PARSE_HINT))}
+          <span class="need has-tip">${escapeHtml(s.hint || (charged ? CHARGE_NEED_LOGIN_HINT : LOGIN_PARSE_HINT))}
             ${UI.infoBtn(`data-inline-info="1"`, "为什么需要登录")}
             <span class="need-tip" role="tooltip">${escapeHtml(tip)}</span>
           </span>
@@ -794,8 +794,8 @@ function fillHelp() {
 
 function openLogin() {
   setLoginMsg("");
-  $("loginInfoPop").hidden = true;
-  $("loginInfoBtn").setAttribute("aria-expanded", "false");
+  const tip = $("loginInfoBtn") && $("loginInfoBtn").closest(".has-tip");
+  if (tip) tip.classList.remove("is-open");
   fillHelp();
   openOverlay("loginOverlay");
 }
@@ -1130,8 +1130,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (e.target.closest("[data-inline-info]")) {
       e.stopPropagation();
-      const need = e.target.closest(".need");
-      document.querySelectorAll(".need.is-open").forEach((el) => {
+      const need = e.target.closest(".has-tip");
+      document.querySelectorAll(".has-tip.is-open").forEach((el) => {
         if (el !== need) el.classList.remove("is-open");
       });
       if (need) need.classList.toggle("is-open");
@@ -1150,10 +1150,13 @@ document.addEventListener("DOMContentLoaded", () => {
   $("sheetClose").onclick = () => closeOverlay("transcriptOverlay");
   $("serviceClose").onclick = () => closeOverlay("serviceOverlay");
 
-  $("loginInfoBtn").onclick = () => {
-    const pop = $("loginInfoPop");
-    pop.hidden = !pop.hidden;
-    $("loginInfoBtn").setAttribute("aria-expanded", String(!pop.hidden));
+  $("loginInfoBtn").onclick = (e) => {
+    e.stopPropagation();
+    const wrap = e.currentTarget.closest(".has-tip");
+    document.querySelectorAll(".has-tip.is-open").forEach((el) => {
+      if (el !== wrap) el.classList.remove("is-open");
+    });
+    if (wrap) wrap.classList.toggle("is-open");
   };
   $("noCookieBtn").onclick = () => {
     closeOverlay("loginOverlay");
@@ -1189,8 +1192,8 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("click", (e) => {
     if (!e.target.closest(".export")) $("exportMenu").hidden = true;
     if (!e.target.closest(".hist-more-wrap")) closeHistMenus();
-    if (!e.target.closest(".need")) {
-      document.querySelectorAll(".need.is-open").forEach((el) => el.classList.remove("is-open"));
+    if (!e.target.closest(".has-tip")) {
+      document.querySelectorAll(".has-tip.is-open").forEach((el) => el.classList.remove("is-open"));
     }
   });
 
