@@ -426,6 +426,12 @@ img.step-ico.is-spin {
   text-decoration: none;
   pointer-events: none;
 }
+.lab-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
 .service-steps {
   margin: 0;
   padding: 0;

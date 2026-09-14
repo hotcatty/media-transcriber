@@ -32,6 +32,10 @@ python start.py --prod
 
 浏览器打开 http://127.0.0.1:8766
 
+在一台电脑上预览不同界面状态（不需要 Windows 真机）：
+
+https://hotcatty.github.io/media-transcriber/?lab=1
+
 国内默认走 HuggingFace 镜像（`HF_ENDPOINT=https://hf-mirror.com`）。
 
 本机助手打包：`packaging/build-macos-zip.sh`、`packaging/build-windows-zip.sh`。

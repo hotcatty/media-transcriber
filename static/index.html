@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=service-guide16">
-  <link rel="stylesheet" href="/static/style.css?v=service-guide16">
+  <link rel="stylesheet" href="/static/ui.css?v=service-guide17">
+  <link rel="stylesheet" href="/static/style.css?v=service-guide17">
 </head>
 <body>
   <div class="stage">
@@ -165,10 +165,31 @@
     </div>
   </div>
 
+  <div class="overlay" id="labOverlay" hidden>
+    <div class="modal modal-sm" role="dialog" aria-labelledby="labTitle">
+      <div class="modal-head">
+        <h2 id="labTitle">界面预览</h2>
+        <button type="button" class="icon-btn" id="labClose" aria-label="关闭">
+          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+        </button>
+      </div>
+      <p class="modal-lead">在这台电脑上预览不同系统和状态。系统级弹窗（Gatekeeper、SmartScreen、是否打开应用）仍需对应系统的真机。</p>
+      <div class="lab-list">
+        <a class="link" href="?scene=first-use">首次使用 · 本机服务未开</a>
+        <a class="link" href="?os=mac&amp;scene=install">安装说明 · Mac</a>
+        <a class="link" href="?os=win&amp;scene=install">安装说明 · Windows</a>
+        <a class="link" href="?scene=login">需要读取登录状态</a>
+        <a class="link" href="?scene=login-fail">读取失败 · 看起来没登录</a>
+        <a class="link" href="?scene=login-lock">读取失败 · 浏览器还开着</a>
+        <a class="link" href="?scene=charge">充电视频需要登录</a>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=service-guide16"></script>
-  <script src="/static/ui.js?v=service-guide16"></script>
-  <script src="/static/app.js?v=service-guide16"></script>
+  <script src="/static/config.js?v=service-guide17"></script>
+  <script src="/static/ui.js?v=service-guide17"></script>
+  <script src="/static/app.js?v=service-guide17"></script>
 </body>
 </html>

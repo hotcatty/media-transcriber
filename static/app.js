@@ -29,6 +29,12 @@ function isWindowsDesktop() {
 }
 
 let serviceChoice = "";
+try {
+  const os = new URLSearchParams(location.search).get("os");
+  if (os === "mac" || os === "win") serviceChoice = os;
+} catch (_) {}
+
+let labPreview = false;
 
 function detectedServicePlatform() {
   if (isMacDesktop()) return "mac";
@@ -1059,6 +1065,67 @@ async function resumeTask(id) {
   startSSE(id);
 }
 
+const LAB_SAMPLE = "https://www.bilibili.com/video/BV1VoYV67EkM";
+
+function runLabScene(scene) {
+  if (!scene) return false;
+  labPreview = true;
+  if ($("urlInput")) {
+    $("urlInput").value = LAB_SAMPLE;
+    syncUrlClear();
+  }
+  if (scene === "lab") {
+    openOverlay("labOverlay");
+    return true;
+  }
+  if (scene === "first-use") {
+    paintFirstUse(LAB_SAMPLE);
+    return true;
+  }
+  if (scene === "install") {
+    openServiceGuide();
+    return true;
+  }
+  const sample = {
+    title: "示例视频",
+    source: LAB_SAMPLE,
+  };
+  if (scene === "login") {
+    applyTask(asNeedsLogin(sample));
+    openLogin();
+    return true;
+  }
+  if (scene === "login-fail") {
+    applyTask(asNeedsLogin(sample));
+    loginHost = "bilibili.com";
+    loginUrl = "https://www.bilibili.com";
+    openHelp();
+    return true;
+  }
+  if (scene === "login-lock") {
+    applyTask(asNeedsLogin(sample));
+    openLogin();
+    setLoginMsg("请先完全退出 Chrome 再点一次", false);
+    return true;
+  }
+  if (scene === "charge") {
+    applyTask({
+      status: "needs_login",
+      title: sample.title,
+      source: sample.source,
+      steps: [
+        { id: "parse", label: "解析视频", state: "done" },
+        { id: "download", label: "下载音频", state: "needs_login", hint: CHARGE_NEED_LOGIN_HINT },
+        { id: "transcribe", label: "语音识别", state: "pending" },
+        { id: "finalize", label: "整理文稿", state: "pending" },
+      ],
+    });
+    return true;
+  }
+  labPreview = false;
+  return false;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   loadBrowsers();
   syncUrlClear();
@@ -1146,13 +1213,14 @@ document.addEventListener("DOMContentLoaded", () => {
   $("helpClose").onclick = () => closeOverlay("helpOverlay");
   $("sheetClose").onclick = () => closeOverlay("transcriptOverlay");
   $("serviceClose").onclick = () => closeOverlay("serviceOverlay");
+  if ($("labClose")) $("labClose").onclick = () => closeOverlay("labOverlay");
   document.querySelectorAll("[data-service-os]").forEach((btn) => {
     btn.onclick = () => {
       const next = btn.getAttribute("data-service-os");
       if (!next || next === currentServicePlatform()) return;
       serviceChoice = next;
       paintServiceGuide();
-      fetchServicePackage();
+      if (!labPreview) fetchServicePackage();
     };
   });
 
@@ -1250,9 +1318,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const params = new URLSearchParams(location.search);
     const share = params.get("url");
     const go = params.get("go") === "1";
+    const scene = params.get("scene") || (params.get("lab") === "1" ? "lab" : "");
     if (share && !$("urlInput").value) {
       $("urlInput").value = share;
       syncUrlClear();
+    }
+    if (runLabScene(scene)) {
+      return;
     }
     if (share && go) {
       history.replaceState({}, "", "/");
