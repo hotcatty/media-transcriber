@@ -781,22 +781,6 @@ function setLoginMsg(text, ok) {
   el.classList.toggle("ok", !!ok);
 }
 
-function looksLikeNotLoggedIn(msg) {
-  return /还没|未登录|没有登录|读不到/.test(msg || "");
-}
-
-function fillHelp() {
-  $("helpBody").textContent =
-    `可能是这台电脑上的浏览器还未登录 ${loginHost}，因此无法获取登录 Cookie。`;
-  $("helpGo").href = loginUrl;
-  $("helpGo").textContent = `前往${loginHost}`;
-}
-
-function openHelp() {
-  fillHelp();
-  openOverlay("helpOverlay");
-}
-
 function openLogin() {
   setLoginMsg("");
   const tip = $("loginInfoBtn") && $("loginInfoBtn").closest(".has-tip");
@@ -842,12 +826,7 @@ async function importCookies() {
     const data = await resp.json().catch(() => ({}));
     const msg = detailText(data, "读取失败");
     if (!resp.ok) {
-      if (looksLikeNotLoggedIn(msg)) {
-        closeOverlay("loginOverlay");
-        openHelp();
-      } else {
-        setLoginMsg(msg, false);
-      }
+      setLoginMsg(msg, false);
       return;
     }
     setLoginMsg(data.message || "已读取", true);
@@ -1097,9 +1076,8 @@ function runLabScene(scene) {
   }
   if (scene === "login-fail") {
     applyTask(asNeedsLogin(sample));
-    loginHost = "bilibili.com";
-    loginUrl = "https://www.bilibili.com";
-    openHelp();
+    openLogin();
+    setLoginMsg("看起来还没在 Chrome 登录B站。请先打开 bilibili.com 并登录，再回来点读取", false);
     return true;
   }
   if (scene === "login-lock") {
@@ -1210,7 +1188,6 @@ document.addEventListener("DOMContentLoaded", () => {
   paintServiceGuide();
   $("historyClose").onclick = () => closeOverlay("historyOverlay");
   $("loginClose").onclick = () => closeOverlay("loginOverlay");
-  $("helpClose").onclick = () => closeOverlay("helpOverlay");
   $("sheetClose").onclick = () => closeOverlay("transcriptOverlay");
   $("serviceClose").onclick = () => closeOverlay("serviceOverlay");
   if ($("labClose")) $("labClose").onclick = () => closeOverlay("labOverlay");

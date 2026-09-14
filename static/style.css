@@ -458,7 +458,11 @@ img.step-ico.is-spin {
   padding: 0 12px;
   flex-wrap: wrap;
 }
-.login-msg { font-size: 14px; color: var(--danger); }
+.login-msg {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--danger);
+}
 .login-msg.ok { color: #1a7f4b; }
 
 .sheet-chrome {
