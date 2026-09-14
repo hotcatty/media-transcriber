@@ -775,11 +775,15 @@ function fillHelp() {
   $("helpGo").textContent = `前往${loginHost}`;
 }
 
+function openHelp() {
+  fillHelp();
+  openOverlay("helpOverlay");
+}
+
 function openLogin() {
   setLoginMsg("");
   const tip = $("loginInfoBtn") && $("loginInfoBtn").closest(".has-tip");
   if (tip) tip.classList.remove("is-open");
-  fillHelp();
   openOverlay("loginOverlay");
 }
 
@@ -823,8 +827,7 @@ async function importCookies() {
     if (!resp.ok) {
       if (looksLikeNotLoggedIn(msg)) {
         closeOverlay("loginOverlay");
-        fillHelp();
-        openOverlay("helpOverlay");
+        openHelp();
       } else {
         setLoginMsg(msg, false);
       }
@@ -1140,11 +1143,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (el !== wrap) el.classList.remove("is-open");
     });
     if (wrap) wrap.classList.toggle("is-open");
-  };
-  $("noCookieBtn").onclick = () => {
-    closeOverlay("loginOverlay");
-    fillHelp();
-    openOverlay("helpOverlay");
   };
   $("importCookieBtn").onclick = importCookies;
 

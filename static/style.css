@@ -600,7 +600,6 @@ img.step-ico.is-spin {
     --sheet-y: 24px;
   }
   .login-row { gap: 16px; padding: 0; }
-  .link--muted { margin-left: 0; }
   .sheet-meta { gap: 8px 16px; }
   .step {
     gap: 16px;
