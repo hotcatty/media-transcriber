@@ -14,7 +14,6 @@ let etaTimer = null;
 let remainFloor = { id: null, value: null };
 let startGen = 0;
 
-const SERVICE_SCHEME = "media-transcriber://open";
 const SERVICE_ZIP_MAC = "https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-macOS.zip";
 const SERVICE_ZIP_WIN = "https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-windows.zip";
 
@@ -61,14 +60,6 @@ async function serviceState() {
   }
 }
 
-function startLocalService() {
-  const frame = document.createElement("iframe");
-  frame.style.display = "none";
-  frame.src = SERVICE_SCHEME;
-  document.body.appendChild(frame);
-  setTimeout(() => frame.remove(), 4000);
-}
-
 const SERVICE_LEAD = "仅首次使用需要安装，所有功能均在本地运行，不涉及隐私问题。";
 const SERVICE_LEAD_OTHER = "目前测试包支持 Mac 和 Windows。请用电脑打开这一页后再下载。";
 
@@ -105,7 +96,6 @@ function fetchServicePackage() {
 function goDownloadService() {
   fetchServicePackage();
   openServiceGuide();
-  startLocalService();
 }
 
 function waitingForService(task) {
@@ -146,17 +136,12 @@ function paintParsePending(url) {
   startEtaClock();
 }
 
-async function waitUntilReady(ms, retrigger) {
+async function waitUntilReady(ms) {
   const gen = startGen;
   const until = Date.now() + ms;
-  let lastStart = Date.now();
   while (Date.now() < until) {
     if (gen !== startGen) return false;
     if (await serviceState() === "ready") return true;
-    if (retrigger && Date.now() - lastStart > 20000) {
-      startLocalService();
-      lastStart = Date.now();
-    }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
   return false;
@@ -165,13 +150,12 @@ async function waitUntilReady(ms, retrigger) {
 async function bringServiceUp(url) {
   startGen += 1;
   paintFirstUse(url);
-  if (await waitUntilReady(8000, false)) {
+  if (await waitUntilReady(8000)) {
     closeOverlay("serviceOverlay");
     return true;
   }
   if (!currentTask) return false;
-  startLocalService();
-  const ready = await waitUntilReady(10 * 60 * 1000, false);
+  const ready = await waitUntilReady(10 * 60 * 1000);
   if (ready) closeOverlay("serviceOverlay");
   return ready;
 }
@@ -712,7 +696,6 @@ async function submitUrl(url) {
   jobCollapsed = false;
   autoOpenedId = null;
   setBusy(true);
-  if (window.MT_API) startLocalService();
   try {
     if (window.MT_API && (await serviceState()) !== "ready") {
       const up = await bringServiceUp(url);
