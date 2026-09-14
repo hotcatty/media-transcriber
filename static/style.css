@@ -53,10 +53,18 @@ body {
 }
 .log-fab {
   position: fixed;
-  top: 20px;
-  right: 24px;
+  top: 44px;
+  right: 44px;
   z-index: 30;
-  font-size: 14px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  opacity: 1;
+}
+.log-fab img {
+  display: block;
+  width: 24px;
+  height: 24px;
 }
 
 .desk {
@@ -414,24 +422,42 @@ img.step-ico.is-spin {
   gap: 4px;
   line-height: 1.4;
 }
+.service-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.service-intro .modal-lead {
+  margin: 0;
+  line-height: normal;
+}
 .service-copy {
   display: flex;
   flex-direction: column;
   gap: 16px;
   min-width: 0;
 }
-.service-copy .modal-lead {
-  margin: 0;
-  line-height: normal;
-}
 .service-os {
   display: flex;
-  gap: 24px;
+  align-items: center;
+  gap: 10px;
 }
-.service-os .link.is-on {
+.service-os-btn {
+  font-size: 16px;
+  line-height: normal;
+  color: var(--ink-60);
+}
+.service-os-btn.is-on {
   color: #000;
-  text-decoration: none;
   pointer-events: none;
+}
+.service-os-rule {
+  width: 1px;
+  height: 18px;
+  background: rgba(0, 0, 0, 0.2);
+  flex: none;
 }
 .lab-list {
   display: flex;
@@ -455,7 +481,7 @@ img.step-ico.is-spin {
 }
 #serviceOverlay .modal {
   overflow-y: auto;
-  gap: 24px;
+  gap: 32px;
 }
 
 .login-row {

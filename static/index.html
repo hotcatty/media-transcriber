@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=service-guide20">
-  <link rel="stylesheet" href="/static/style.css?v=service-guide20">
+  <link rel="stylesheet" href="/static/ui.css?v=service-guide21">
+  <link rel="stylesheet" href="/static/style.css?v=service-guide21">
 </head>
 <body>
   <div class="stage">
@@ -136,18 +136,20 @@
 
   <div class="overlay" id="serviceOverlay" hidden>
     <div class="modal" role="dialog" aria-labelledby="serviceTitle">
-      <div class="modal-head">
-        <h2 id="serviceTitle">正在下载，请按提示完成安装</h2>
-        <button type="button" class="icon-btn" id="serviceClose" aria-label="关闭">
-          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
-        </button>
+      <div class="service-intro">
+        <div class="modal-head">
+          <h2 id="serviceTitle">正在下载，请按提示完成安装</h2>
+          <button type="button" class="icon-btn" id="serviceClose" aria-label="关闭">
+            <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+          </button>
+        </div>
+        <p class="modal-lead" id="serviceLead">仅首次使用需要安装，所有功能均在本地运行，不涉及隐私问题。</p>
       </div>
       <div class="service-copy">
-        <p class="modal-lead" id="serviceLead">仅首次使用需要安装，所有功能均在本地运行，不涉及隐私问题。</p>
-        <a class="link" id="serviceZipLink" href="#" rel="noopener" hidden>如果没有开始下载，点这里下载安装包</a>
         <div class="service-os" role="group" aria-label="选择系统">
-          <button type="button" class="link" data-service-os="mac">Mac</button>
-          <button type="button" class="link" data-service-os="win">Windows</button>
+          <button type="button" class="service-os-btn" data-service-os="mac">Mac</button>
+          <span class="service-os-rule" aria-hidden="true"></span>
+          <button type="button" class="service-os-btn" data-service-os="win">Windows</button>
         </div>
         <div class="service-steps" id="serviceGuideMac">
           <p>1、双击压缩包解压，并点击“转录小工具”</p>
@@ -199,12 +201,14 @@
     </div>
   </div>
 
-  <button type="button" class="link link--on-dark log-fab" id="logBtn">反馈操作日志</button>
+  <button type="button" class="log-fab" id="logBtn" aria-label="反馈操作日志">
+    <img src="/static/img/icon-feedback.svg" alt="" width="24" height="24">
+  </button>
 
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=service-guide20"></script>
-  <script src="/static/ui.js?v=service-guide20"></script>
-  <script src="/static/app.js?v=service-guide20"></script>
+  <script src="/static/config.js?v=service-guide21"></script>
+  <script src="/static/ui.js?v=service-guide21"></script>
+  <script src="/static/app.js?v=service-guide21"></script>
 </body>
 </html>

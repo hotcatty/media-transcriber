@@ -144,15 +144,6 @@ function paintServiceGuide() {
   };
   show("serviceGuideMac", platform === "mac");
   show("serviceGuideWin", platform === "win");
-  const zipLink = $("serviceZipLink");
-  const zip = serviceZipFor(platform);
-  if (zipLink) {
-    zipLink.hidden = !zip;
-    if (zip) {
-      zipLink.href = zip;
-      zipLink.removeAttribute("target");
-    }
-  }
   document.querySelectorAll("[data-service-os]").forEach((btn) => {
     const on = btn.getAttribute("data-service-os") === platform;
     btn.classList.toggle("is-on", on);
@@ -178,15 +169,8 @@ function fetchServicePackage() {
     opNote("download.skip", { reason: "no-package", platform });
     return false;
   }
-  paintServiceGuide();
-  const link = $("serviceZipLink");
-  if (link && link.getAttribute("href") && link.getAttribute("href") !== "#") {
-    link.click();
-    opNote("download.start", { platform, zip, via: "anchor" });
-    return true;
-  }
-  opNote("download.skip", { reason: "no-link", platform });
-  return false;
+  opNote("download.start", { platform, zip, via: "anchor" });
+  return true;
 }
 
 function goDownloadService() {
@@ -1289,18 +1273,12 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   $("logClose").onclick = () => closeOverlay("logOverlay");
   $("logDownload").onclick = downloadOpLog;
-  if ($("serviceZipLink")) {
-    $("serviceZipLink").addEventListener("click", () => {
-      opNote("download.link", { platform: currentServicePlatform(), href: $("serviceZipLink").href });
-    });
-  }
   document.querySelectorAll("[data-service-os]").forEach((btn) => {
     btn.onclick = () => {
       const next = btn.getAttribute("data-service-os");
       if (!next || next === currentServicePlatform()) return;
       serviceChoice = next;
       paintServiceGuide();
-      if (!labPreview) fetchServicePackage();
     };
   });
 
