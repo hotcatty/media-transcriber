@@ -150,7 +150,7 @@ function paintServiceGuide() {
     zipLink.hidden = !zip;
     if (zip) {
       zipLink.href = zip;
-      zipLink.target = "_blank";
+      zipLink.removeAttribute("target");
     }
   }
   document.querySelectorAll("[data-service-os]").forEach((btn) => {
@@ -178,19 +178,19 @@ function fetchServicePackage() {
     opNote("download.skip", { reason: "no-package", platform });
     return false;
   }
-  let opened = false;
-  try {
-    opened = !!window.open(zip, "_blank", "noopener");
-  } catch (err) {
-    opNote("download.open-error", { platform, message: String(err && err.message || err) });
+  paintServiceGuide();
+  const link = $("serviceZipLink");
+  if (link && link.getAttribute("href") && link.getAttribute("href") !== "#") {
+    link.click();
+    opNote("download.start", { platform, zip, via: "anchor" });
+    return true;
   }
-  opNote("download.start", { platform, zip, opened });
-  return true;
+  opNote("download.skip", { reason: "no-link", platform });
+  return false;
 }
 
 function goDownloadService() {
   opNote("download.click", { platform: currentServicePlatform() });
-  fetchServicePackage();
   openServiceGuide();
 }
 
@@ -667,7 +667,11 @@ function renderJob(task) {
         extra = `<button type="button" class="link" data-reveal-audio="1">${escapeHtml(s.action_label || "查看音频")}</button>`;
       } else if (s.state === "current" && s.id === "model") {
         if (s.need_service) {
-          extra = `<span class="step-extra"><span class="step-hint">首次使用需要下载语音分析模型</span><button type="button" class="link" data-download-service="1">前往下载</button></span>`;
+          const zip = serviceZipFor(currentServicePlatform());
+          const go = zip
+            ? `<a class="link" data-download-service="1" href="${escapeHtml(zip)}" rel="noopener">前往下载</a>`
+            : `<span class="step-hint">请用电脑打开后再下载</span>`;
+          extra = `<span class="step-extra"><span class="step-hint">首次使用需要下载语音分析模型</span>${go}</span>`;
         } else {
           const size = s.size || "";
           const remain = liveRemain(task);
