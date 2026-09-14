@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=service-guide8">
-  <link rel="stylesheet" href="/static/style.css?v=service-guide8">
+  <link rel="stylesheet" href="/static/ui.css?v=service-guide9">
+  <link rel="stylesheet" href="/static/style.css?v=service-guide9">
 </head>
 <body>
   <div class="stage">
@@ -37,7 +37,6 @@
       </form>
       <div class="desk-links">
         <button type="button" class="link link--on-dark" id="historyBtn">查看历史记录</button>
-        <button type="button" class="link link--on-dark" id="serviceBtn" hidden>下载本机服务</button>
       </div>
     </div>
   </div>
@@ -149,47 +148,33 @@
   <div class="overlay" id="serviceOverlay" hidden>
     <div class="modal" role="dialog" aria-labelledby="serviceTitle">
       <div class="modal-head">
-        <h2 id="serviceTitle">下载并打开本机服务</h2>
+        <h2 id="serviceTitle">正在下载，请按提示完成安装</h2>
         <button type="button" class="icon-btn" id="serviceClose" aria-label="关闭">
           <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
         </button>
       </div>
-      <p class="modal-lead" id="serviceLeadMac">
-        第一次需要在这台电脑上打开一次本机服务。系统会提示无法验证，这是正常的。按下面做就能打开，不要点「移到废纸篓」。
-      </p>
-      <p class="modal-lead" id="serviceLeadWin" hidden>
-        第一次需要在这台电脑上打开一次本机服务。下载解压后打开即可，一般不用过安全验证。
-      </p>
-      <p class="modal-lead" id="serviceLeadOther" hidden>
-        目前测试包支持 Mac 和 Windows。请用电脑打开这一页后再下载。
-      </p>
-      <ol class="service-steps" id="serviceGuideMac">
-        <li>点下面的「下载本机服务」，浏览器会下一个压缩包。</li>
-        <li>打开「下载」文件夹，双击压缩包解压。如果已有旧的「转录小工具」，先移到废纸篓，再打开这次解压出来的。</li>
-        <li>如果弹出「未打开」：点左边灰色的「完成」，不要点蓝色的「移到废纸篓」。</li>
-        <li>打开左上角苹果菜单 → 系统设置 → 隐私与安全性，拉到最下面的「安全性」。</li>
-        <li>看到已阻止「转录小工具」，点「仍要打开」，再确认一次「打开」。</li>
-        <li>回到这一页，粘贴链接，点「转录为逐字稿」。</li>
-      </ol>
-      <ol class="service-steps" id="serviceGuideWin" hidden>
-        <li>点下面的「下载本机服务」，浏览器会下一个压缩包。</li>
-        <li>打开「下载」文件夹，解压压缩包，双击里面的 start.bat。</li>
-        <li>第一次准备大约几分钟。看到已经准备好后，回到这一页。</li>
-        <li>粘贴链接，点「转录为逐字稿」。</li>
-      </ol>
-      <p class="service-alt" id="serviceAltMac">也可以按住 Control 点「转录小工具」，选「打开」。如果还是同一句提示，就用上面的系统设置。准备好后会提示「已经准备好」，回到这一页即可，不必反复打开这个程序。如果系统说「应用程序无法打开」，也先回到这一页试试。打开失败时会弹出说明页，点「下载说明.txt」，把这个文件发给我。</p>
-      <p class="service-alt" id="serviceAltWin" hidden>如果弹出「Windows 已保护你的电脑」，点「更多信息」，再点「仍要运行」。没有这句提示就不用管。</p>
-      <div class="service-actions">
-        <button type="button" class="btn btn--solid" id="serviceDownloadBtn">下载本机服务</button>
-        <p class="service-status" id="serviceStatus" hidden></p>
+      <div class="service-copy">
+        <p class="modal-lead" id="serviceLead">仅首次使用需要安装，所有功能均在本地运行，不涉及隐私问题。</p>
+        <div class="service-steps" id="serviceGuideMac">
+          <p>1、双击压缩包解压，并点击“转录小工具”</p>
+          <p>2、如果显示“未打开‘转录小工具’”，这是正常的，本工具没有经过 Apple 公证。请点击“完成”</p>
+          <p>3、打开左上角苹果菜单 — 系统设置 — 隐私与安全性，拉到最下面的“安全性”。</p>
+          <p>4、点击“仍要打开”并二次确认</p>
+          <p>5、刷新页面即可正常使用。</p>
+        </div>
+        <div class="service-steps" id="serviceGuideWin" hidden>
+          <p>1、打开“下载”文件夹，解压压缩包，双击里面的 start.bat</p>
+          <p>2、如果弹出“Windows 已保护你的电脑”，点“更多信息”，再点“仍要运行”。没有这句提示就不用管。</p>
+          <p>3、第一次准备大约几分钟。看到已经准备好后，刷新页面即可正常使用。</p>
+        </div>
       </div>
     </div>
   </div>
 
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=service-guide8"></script>
-  <script src="/static/ui.js?v=service-guide8"></script>
-  <script src="/static/app.js?v=service-guide8"></script>
+  <script src="/static/config.js?v=service-guide9"></script>
+  <script src="/static/ui.js?v=service-guide9"></script>
+  <script src="/static/app.js?v=service-guide9"></script>
 </body>
 </html>

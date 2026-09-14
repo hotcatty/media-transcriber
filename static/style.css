@@ -387,39 +387,33 @@ img.step-ico.is-spin {
   gap: 4px;
   line-height: 1.4;
 }
-.service-steps {
-  margin: 0;
-  padding-left: 1.3em;
+.service-copy {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
+  min-width: 0;
+}
+.service-copy .modal-lead {
+  margin: 0;
+  line-height: normal;
+}
+.service-steps {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   font-size: 16px;
-  line-height: 1.45;
+  line-height: normal;
   color: #000;
 }
-.service-alt {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.45;
-  color: var(--ink-60);
-}
+.service-steps p { margin: 0; }
 #serviceOverlay [hidden] {
   display: none !important;
 }
-.service-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-}
-.service-status {
-  margin: 0;
-  font-size: 14px;
-  color: #1a7f4b;
-}
 #serviceOverlay .modal {
   overflow-y: auto;
-  gap: 20px;
+  gap: 24px;
 }
 .info-pop {
   margin-top: -16px;

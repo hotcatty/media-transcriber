@@ -69,59 +69,48 @@ function startLocalService() {
   setTimeout(() => frame.remove(), 4000);
 }
 
+const SERVICE_LEAD = "仅首次使用需要安装，所有功能均在本地运行，不涉及隐私问题。";
+const SERVICE_LEAD_OTHER = "目前测试包支持 Mac 和 Windows。请用电脑打开这一页后再下载。";
+
 function paintServiceGuide() {
   const platform = servicePlatform();
+  const lead = $("serviceLead");
+  if (lead) lead.textContent = platform === "other" ? SERVICE_LEAD_OTHER : SERVICE_LEAD;
   const show = (id, on) => {
     const el = $(id);
     if (el) el.hidden = !on;
   };
-  show("serviceLeadMac", platform === "mac");
-  show("serviceLeadWin", platform === "win");
-  show("serviceLeadOther", platform === "other");
   show("serviceGuideMac", platform === "mac");
   show("serviceGuideWin", platform === "win");
-  show("serviceAltMac", platform === "mac");
-  show("serviceAltWin", platform === "win");
-  const btn = $("serviceDownloadBtn");
-  if (btn) btn.hidden = platform === "other";
 }
 
 function openServiceGuide() {
   paintServiceGuide();
-  const status = $("serviceStatus");
-  if (status) {
-    status.hidden = true;
-    status.textContent = "";
-  }
   openOverlay("serviceOverlay");
 }
 
 function fetchServicePackage() {
-  const status = $("serviceStatus");
   const platform = servicePlatform();
   const zip = platform === "mac" ? SERVICE_ZIP_MAC : platform === "win" ? SERVICE_ZIP_WIN : "";
-  if (!zip) {
-    if (status) {
-      status.hidden = false;
-      status.textContent = "目前测试包支持 Mac 和 Windows";
-      status.style.color = "var(--danger)";
-    }
-    return false;
-  }
+  if (!zip) return false;
   const a = document.createElement("a");
   a.href = zip;
   a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
   a.remove();
-  if (status) {
-    status.hidden = false;
-    status.style.color = "#1a7f4b";
-    status.textContent = platform === "mac"
-      ? "已开始下载。解压后按弹窗里的步骤打开，不要点「移到废纸篓」。"
-      : "已开始下载。解压后双击 start.bat，再回到这一页。";
-  }
   return true;
+}
+
+function goDownloadService() {
+  fetchServicePackage();
+  openServiceGuide();
+  startLocalService();
+}
+
+function waitingForService(task) {
+  const steps = (task && task.steps) || [];
+  return steps.some((s) => s.id === "model" && s.need_service);
 }
 
 function paintFirstUse(url) {
@@ -130,7 +119,7 @@ function paintFirstUse(url) {
     title: url,
     source: url,
     steps: [
-      { id: "model", label: "下载turbo模型", state: "current", size: "0M / 1.6G" },
+      { id: "model", label: "下载turbo模型", state: "current", need_service: true },
       { id: "parse", label: "解析视频", state: "pending" },
       { id: "download", label: "下载音频", state: "pending" },
       { id: "transcribe", label: "语音识别", state: "pending" },
@@ -176,11 +165,15 @@ async function waitUntilReady(ms, retrigger) {
 async function bringServiceUp(url) {
   startGen += 1;
   paintFirstUse(url);
-  if (await waitUntilReady(8000, false)) return true;
+  if (await waitUntilReady(8000, false)) {
+    closeOverlay("serviceOverlay");
+    return true;
+  }
   if (!currentTask) return false;
-  openServiceGuide();
   startLocalService();
-  return waitUntilReady(10 * 60 * 1000, false);
+  const ready = await waitUntilReady(10 * 60 * 1000, false);
+  if (ready) closeOverlay("serviceOverlay");
+  return ready;
 }
 
 function formatRemain(seconds) {
@@ -238,6 +231,7 @@ function paintEta() {
   if (!step || !currentTask) return;
   const remain = liveRemain(currentTask);
   if (remain == null) return;
+  if (waitingForService(currentTask)) return;
   if (step.classList.contains("step--model")) {
     const el = step.querySelector(".step-hint--eta");
     if (el) el.textContent = formatModelRemain(remain);
@@ -586,10 +580,14 @@ function renderJob(task) {
       } else if (s.action === "view_audio") {
         extra = `<button type="button" class="link" data-reveal-audio="1">${escapeHtml(s.action_label || "查看音频")}</button>`;
       } else if (s.state === "current" && s.id === "model") {
-        const size = s.size || "";
-        const remain = liveRemain(task);
-        const hint = formatModelRemain(remain);
-        extra = `<span class="step-extra">${size ? `<span class="step-hint">${escapeHtml(size)}</span>` : ""}<span class="step-hint step-hint--eta">${escapeHtml(hint)}</span></span>`;
+        if (s.need_service) {
+          extra = `<span class="step-extra"><span class="step-hint">首次使用需要下载语音分析模型</span><button type="button" class="link" data-download-service="1">前往下载</button></span>`;
+        } else {
+          const size = s.size || "";
+          const remain = liveRemain(task);
+          const hint = formatModelRemain(remain);
+          extra = `<span class="step-extra">${size ? `<span class="step-hint">${escapeHtml(size)}</span>` : ""}<span class="step-hint step-hint--eta">${escapeHtml(hint)}</span></span>`;
+        }
       } else if (s.state === "current") {
         const remain = liveRemain(task);
         const countdown = remain != null ? formatRemain(remain) : (s.eta || s.hint || "剩余约1s");
@@ -1088,6 +1086,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   $("jobPanel").addEventListener("click", async (e) => {
+    if (e.target.closest("[data-download-service]")) {
+      e.stopPropagation();
+      goDownloadService();
+      return;
+    }
     if (e.target.closest("#expandJobBtn")) {
       e.stopPropagation();
       expandJob();
@@ -1132,19 +1135,11 @@ document.addEventListener("DOMContentLoaded", () => {
     openOverlay("historyOverlay");
   };
   paintServiceGuide();
-  if (window.MT_API) {
-    const serviceBtn = $("serviceBtn");
-    if (serviceBtn) {
-      serviceBtn.hidden = false;
-      serviceBtn.onclick = () => openServiceGuide();
-    }
-  }
   $("historyClose").onclick = () => closeOverlay("historyOverlay");
   $("loginClose").onclick = () => closeOverlay("loginOverlay");
   $("helpClose").onclick = () => closeOverlay("helpOverlay");
   $("sheetClose").onclick = () => closeOverlay("transcriptOverlay");
   $("serviceClose").onclick = () => closeOverlay("serviceOverlay");
-  $("serviceDownloadBtn").onclick = () => fetchServicePackage();
 
   $("loginInfoBtn").onclick = () => {
     const pop = $("loginInfoPop");
@@ -1172,7 +1167,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.querySelector(".stage").addEventListener("click", (e) => {
-    if (e.target.closest(".card, #historyBtn, #serviceBtn")) return;
+    if (e.target.closest(".card, #historyBtn")) return;
     collapseJob();
   });
 
