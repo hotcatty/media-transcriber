@@ -52,6 +52,15 @@ SITES = {
             }
         ),
     },
+    "xiaohongshu": {
+        "id": "xiaohongshu",
+        "label": "小红书",
+        "host": "xiaohongshu.com",
+        "url": "https://www.xiaohongshu.com",
+        "probe": "https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9",
+        "domains": ("xiaohongshu.com",),
+        "cookie_names": frozenset({"web_session"}),
+    },
 }
 
 _APP_PATHS = {
@@ -86,6 +95,8 @@ def site_from_url(url: str) -> str:
     u = (url or "").lower()
     if "youtube.com" in u or "youtu.be" in u:
         return "youtube"
+    if "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u:
+        return "xiaohongshu"
     return "bilibili"
 
 
@@ -194,7 +205,11 @@ def _cookie_file_has_login(path: Path, meta: dict) -> bool:
     except OSError:
         return False
     for line in text.splitlines():
-        if not line or line.startswith("#"):
+        if not line:
+            continue
+        if line.startswith("#HttpOnly_"):
+            line = line[len("#HttpOnly_"):]
+        elif line.startswith("#"):
             continue
         parts = line.split("\t")
         if len(parts) < 6:

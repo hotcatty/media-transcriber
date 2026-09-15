@@ -339,20 +339,28 @@ function detailText(data, fallback) {
 }
 
 function looksLikeUrl(s) {
-  s = String(s || "").trim();
-  return /^(https?:\/\/|www\.)/i.test(s) || /spm_id_from=|vd_source=/.test(s);
+  s = extractShareUrl(s);
+  return /^(https?:\/\/|www\.)/i.test(s) || /spm_id_from=|vd_source=|xsec_token=/.test(s);
 }
 
 function isValidShareUrl(s) {
-  s = String(s || "").trim();
+  s = extractShareUrl(s);
   if (!looksLikeUrl(s)) return false;
   if (/^www\./i.test(s)) s = "https://" + s;
   try {
     const u = new URL(s);
     return u.protocol === "http:" || u.protocol === "https:";
   } catch (_) {
-    return /spm_id_from=|vd_source=/.test(s);
+    return /spm_id_from=|vd_source=|xsec_token=/.test(s);
   }
+}
+
+function extractShareUrl(s) {
+  const raw = String(s || "").trim();
+  const m = raw.match(/https?:\/\/[^\s<>"']+/i);
+  if (m) return m[0].replace(/[，。；、！？,);]+.*$/, "").replace(/[\u4e00-\u9fff].*$/, "").replace(/[),.;]+$/, "");
+  if (/^www\./i.test(raw)) return "https://" + raw;
+  return raw;
 }
 
 function isUrlFormatError(msg) {
@@ -427,6 +435,7 @@ function platformOf(source) {
   const u = String(source || "").toLowerCase();
   if (u.includes("bilibili.com") || u.includes("b23.tv")) return "bilibili";
   if (u.includes("xiaoyuzhou")) return "xiaoyuzhou";
+  if (u.includes("xiaohongshu.com") || u.includes("xhslink.com") || u.includes("xhslink.cn")) return "xiaohongshu";
   if (u.includes("youtube.com") || u.includes("youtu.be")) return "youtube";
   return "generic";
 }
@@ -435,25 +444,38 @@ function platformIcon(source) {
   const p = platformOf(source);
   if (p === "bilibili") return mtAsset("/static/img/icon-bilibili.png");
   if (p === "xiaoyuzhou") return mtAsset("/static/img/icon-xiaoyuzhou.png");
+  if (p === "xiaohongshu") return mtAsset("/static/img/icon-xiaohongshu.svg");
   if (p === "youtube") return mtAsset("/static/img/icon-youtube-mark.svg");
   return mtAsset("/static/img/icon-xiaoyuzhou.png");
+}
+
+const LOGIN_SITES = {
+  youtube: { host: "youtube.com", url: "https://www.youtube.com", label: "YouTube" },
+  xiaohongshu: { host: "xiaohongshu.com", url: "https://www.xiaohongshu.com", label: "小红书" },
+  bilibili: { host: "bilibili.com", url: "https://www.bilibili.com", label: "B 站" },
+};
+
+function loginMeta(site) {
+  return LOGIN_SITES[site] || LOGIN_SITES.bilibili;
 }
 
 function syncLoginSite(task) {
   if (task && task.login_site) {
     loginSite = task.login_site;
-    loginHost = task.login_host || (loginSite === "youtube" ? "youtube.com" : "bilibili.com");
-    loginUrl = task.login_url || (loginSite === "youtube" ? "https://www.youtube.com" : "https://www.bilibili.com");
+    const meta = loginMeta(loginSite);
+    loginHost = task.login_host || meta.host;
+    loginUrl = task.login_url || meta.url;
     return;
   }
   const p = platformOf(task && task.source);
-  loginSite = p === "youtube" ? "youtube" : "bilibili";
-  loginHost = loginSite === "youtube" ? "youtube.com" : "bilibili.com";
-  loginUrl = loginSite === "youtube" ? "https://www.youtube.com" : "https://www.bilibili.com";
+  loginSite = LOGIN_SITES[p] ? p : "bilibili";
+  const meta = loginMeta(loginSite);
+  loginHost = meta.host;
+  loginUrl = meta.url;
 }
 
 function siteLabel() {
-  return loginSite === "youtube" ? "YouTube" : "B 站";
+  return loginMeta(loginSite).label;
 }
 
 function setBusy(on) {
@@ -774,6 +796,8 @@ async function postTranscribe(url) {
 }
 
 async function submitUrl(url) {
+  url = extractShareUrl(url);
+  if ($("urlInput") && url) $("urlInput").value = url;
   if (!isValidShareUrl(url)) {
     showToast("请输入正确格式的网址");
     return;

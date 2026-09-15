@@ -16,7 +16,11 @@ from engines import Segment
 from text_utils import (
     CHARGE_NEED_LOGIN_HINT,
     CHARGE_VIDEO_HINT,
+    NO_MEDIA_HINT,
+    extract_share_url,
     is_charge_gated,
+    is_xiaohongshu_url,
+    normalize_xiaohongshu_url,
     strip_ansi as _clean,
     to_simplified as _to_simplified,
 )
@@ -79,6 +83,9 @@ class VideoProcessor:
         u = (url or "").lower()
         if "bilibili.com" in u or "b23.tv" in u:
             headers["Referer"] = "https://www.bilibili.com/"
+        elif "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u:
+            headers["Referer"] = "https://www.xiaohongshu.com/"
+            headers["Origin"] = "https://www.xiaohongshu.com"
         elif "youtube.com" in u or "youtu.be" in u:
             headers["Referer"] = "https://www.youtube.com/"
         return headers
@@ -104,6 +111,28 @@ class VideoProcessor:
     def _is_bilibili(self, url: str) -> bool:
         u = (url or "").lower()
         return "bilibili.com" in u or "b23.tv" in u
+
+    def _is_xiaohongshu(self, url: str) -> bool:
+        return is_xiaohongshu_url(url)
+
+    def _follow_redirect(self, url: str) -> str:
+        req = urllib.request.Request(url, headers=self._headers_for(url))
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.geturl() or url
+        except Exception as e:
+            logger.info("短链跳转失败，沿用原地址: %s", _clean(str(e))[:200])
+            return url
+
+    def prepare_url(self, url: str) -> str:
+        raw = extract_share_url(url)
+        if not self._is_xiaohongshu(raw):
+            return raw
+        prepared = normalize_xiaohongshu_url(raw)
+        host = (prepared or "").lower()
+        if "xhslink.com" in host or "xhslink.cn" in host:
+            prepared = normalize_xiaohongshu_url(self._follow_redirect(prepared))
+        return prepared
 
     def _bvid(self, url: str, info: Optional[dict] = None) -> Optional[str]:
         for raw in (url, (info or {}).get("webpage_url"), (info or {}).get("id")):
@@ -282,6 +311,7 @@ class VideoProcessor:
                 return False
 
     async def fetch_subtitles(self, url: str, output_dir: Path) -> tuple:
+        url = await asyncio.to_thread(self.prepare_url, url)
         output_dir.mkdir(exist_ok=True)
         unique_id = str(uuid.uuid4())[:8]
         sub_dir = output_dir / f"subs_{unique_id}"
@@ -371,6 +401,9 @@ class VideoProcessor:
             return None, video_title, None, video_duration, charge
 
         except Exception as e:
+            clean_err = _clean(str(e))
+            if self._is_xiaohongshu(url) and "no video formats" in clean_err.lower():
+                raise Exception(NO_MEDIA_HINT)
             logger.warning(f"字幕获取失败（将回退至音频下载）: {e}")
             return None, video_title, None, video_duration, charge
         finally:
@@ -559,6 +592,7 @@ class VideoProcessor:
         on_progress: Optional[Callable] = None,
     ) -> tuple:
         try:
+            url = await asyncio.to_thread(self.prepare_url, url)
             output_dir.mkdir(exist_ok=True)
             unique_id = str(uuid.uuid4())[:8]
             output_template = str(output_dir / f"audio_{unique_id}.%(ext)s")
@@ -623,6 +657,9 @@ class VideoProcessor:
         except Exception as e:
             clean_err = _clean(str(e))
             logger.error(f"下载视频失败: {clean_err}")
+            low = clean_err.lower()
+            if self._is_xiaohongshu(url) and "no video formats" in low:
+                raise Exception(NO_MEDIA_HINT)
             gated = is_charge_gated(clean_err)
             if not gated:
                 gated = await asyncio.to_thread(self._bilibili_is_charge, url)

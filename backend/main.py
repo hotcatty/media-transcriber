@@ -1,7 +1,7 @@
 """
 媒体转录器 — localhost Web API.
 
-粘贴小宇宙 / B 站 / YouTube 分享链接，或上传音视频，输出简体、有标点、
+粘贴小宇宙 / B 站 / 小红书 / YouTube 分享链接，或上传音视频，输出简体、有标点、
 有段落的逐字稿，方便喂给自己的 AI。
 """
 from __future__ import annotations

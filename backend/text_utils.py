@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 try:
     import opencc as _opencc
@@ -33,11 +33,52 @@ def strip_ansi(text: str) -> str:
     return s.strip()
 
 
+_SHARE_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
+_SHARE_URL_CUT_RE = re.compile(r"[，。；、！？,);]+|[\u4e00-\u9fff]")
+
+
+def extract_share_url(text: str) -> str:
+    """First http(s) URL in a paste. Xiaohongshu shares often wrap the link in copy."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    m = _SHARE_URL_RE.search(raw)
+    if m:
+        return _SHARE_URL_CUT_RE.split(m.group(0), 1)[0].rstrip(").,;]")
+    if raw.lower().startswith("www."):
+        return "https://" + raw
+    return raw
+
+
 def looks_like_url(text: str) -> bool:
-    t = (text or "").strip()
+    t = extract_share_url(text)
     if _URL_RE.match(t):
         return True
-    return "spm_id_from=" in t or "vd_source=" in t
+    return "spm_id_from=" in t or "vd_source=" in t or "xsec_token=" in t
+
+
+def is_xiaohongshu_url(url: str) -> bool:
+    u = (url or "").lower()
+    return "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u
+
+
+def normalize_xiaohongshu_url(url: str) -> str:
+    """www + explore path so yt-dlp's XiaoHongShu extractor matches. Keep xsec_token."""
+    raw = extract_share_url(url)
+    if not raw or not is_xiaohongshu_url(raw):
+        return raw or (url or "")
+    if not re.match(r"^https?://", raw, re.I):
+        raw = "https://" + raw.lstrip("/")
+    parsed = urlparse(raw)
+    host = (parsed.netloc or "").lower()
+    if host in ("xiaohongshu.com", "m.xiaohongshu.com") or host.endswith(".xiaohongshu.com"):
+        if host != "www.xiaohongshu.com":
+            parsed = parsed._replace(netloc="www.xiaohongshu.com")
+    path = parsed.path or ""
+    m = re.match(r"^/user/profile/[^/]+/([\da-f]+)/?", path, re.I)
+    if m:
+        parsed = parsed._replace(path=f"/explore/{m.group(1)}")
+    return urlunparse(parsed)
 
 
 def canonical_source(url: str) -> str:
@@ -88,11 +129,23 @@ def canonical_source(url: str) -> str:
         if m:
             return f"xiaoyuzhou:{m.group(1)}"
 
+    if host.endswith("xiaohongshu.com"):
+        m = re.search(r"/(?:explore|discovery/item|video)/([\da-f]+)", path, re.I)
+        if m:
+            return f"xiaohongshu:{m.group(1)}"
+        m = re.search(r"/user/profile/[^/]+/([\da-f]+)", path, re.I)
+        if m:
+            return f"xiaohongshu:{m.group(1)}"
+    if host.endswith("xhslink.com") or host.endswith("xhslink.cn"):
+        slug = path.strip("/")
+        if slug:
+            return f"xhslink:{slug}"
+
     return f"{host}{path.rstrip('/')}".lower()
 
 
 _FALLBACK_TITLE = re.compile(
-    r"^(B站视频|小宇宙播客|YouTube 视频|Spotify 播客|喜马拉雅|播客|分享内容) · \d+月"
+    r"^(B站视频|小宇宙播客|小红书视频|YouTube 视频|Spotify 播客|喜马拉雅|播客|分享内容) · \d+月"
 )
 
 
@@ -116,6 +169,8 @@ def platform_label(source: str, source_type: str = "url") -> str:
         return "B站视频"
     if "xiaoyuzhou" in u:
         return "小宇宙播客"
+    if "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u:
+        return "小红书视频"
     if "youtube.com" in u or "youtu.be" in u:
         return "YouTube 视频"
     if "spotify.com" in u:
@@ -159,6 +214,7 @@ TEMPORARY_PARSE_HINT = "暂时无法解析，请稍后重试"
 DOWNLOAD_FAIL_HINT = "暂时无法下载音频，请稍后重试"
 CHARGE_VIDEO_HINT = "该视频为充电视频，暂时无法下载音频/视频"
 CHARGE_NEED_LOGIN_HINT = "该视频为充电视频，请读取已充电账号的登录状态"
+NO_MEDIA_HINT = "这篇笔记没有可转录的视频"
 
 
 def is_login_required(text: str) -> bool:
@@ -170,6 +226,8 @@ def is_login_required(text: str) -> bool:
     raw = raw.replace("可能需要登录", "")
     low = raw.lower().replace("’", "'").replace("‘", "'")
     if "412" in raw or "precondition failed" in low:
+        return True
+    if "300031" in raw or "this page isn't available" in low:
         return True
     if "登录状态" in raw or "需要登录后" in raw:
         return True
@@ -304,6 +362,8 @@ def friendly_error(text: str) -> str:
     low = raw.lower()
     if "请检查链接或登录信息" in raw or "可能需要登录" in raw:
         return TEMPORARY_PARSE_HINT
+    if NO_MEDIA_HINT in raw or "no video formats" in low:
+        return NO_MEDIA_HINT
     if is_charge_need_login(raw):
         return CHARGE_NEED_LOGIN_HINT
     if is_charge_gated(raw):

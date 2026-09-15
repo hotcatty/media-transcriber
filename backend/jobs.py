@@ -39,6 +39,7 @@ from text_utils import (
     LOGIN_PARSE_HINT,
     canonical_source,
     display_title,
+    extract_share_url,
     format_slash_when,
     friendly_error,
     humanize_duration,
@@ -451,6 +452,7 @@ class JobManager:
         return None
 
     async def submit_url(self, url: str) -> Task:
+        url = extract_share_url(url)
         existing = self.find_active(url)
         if existing:
             return existing
