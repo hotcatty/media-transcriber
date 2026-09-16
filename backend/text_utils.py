@@ -57,6 +57,23 @@ def looks_like_url(text: str) -> bool:
     return "spm_id_from=" in t or "vd_source=" in t or "xsec_token=" in t
 
 
+def is_apple_podcasts_url(url: str) -> bool:
+    u = (url or "").lower()
+    return "podcasts.apple.com" in u or "itunes.apple.com" in u
+
+
+def apple_episode_id(url: str) -> str:
+    raw = extract_share_url(url)
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return ""
+    eid = (parse_qs(parsed.query).get("i") or [""])[0]
+    return eid if eid.isdigit() else ""
+
+
 def is_xiaohongshu_url(url: str) -> bool:
     u = (url or "").lower()
     return "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u
@@ -141,11 +158,16 @@ def canonical_source(url: str) -> str:
         if slug:
             return f"xhslink:{slug}"
 
+    if "podcasts.apple.com" in host or "itunes.apple.com" in host:
+        eid = (qs.get("i") or [None])[0]
+        if eid and str(eid).isdigit():
+            return f"apple:{eid}"
+
     return f"{host}{path.rstrip('/')}".lower()
 
 
 _FALLBACK_TITLE = re.compile(
-    r"^(B站视频|小宇宙播客|小红书视频|YouTube 视频|Spotify 播客|喜马拉雅|播客|分享内容) · \d+月"
+    r"^(B站视频|小宇宙播客|小红书视频|YouTube 视频|苹果播客|Spotify 播客|喜马拉雅|播客|分享内容) · \d+月"
 )
 
 
@@ -173,6 +195,8 @@ def platform_label(source: str, source_type: str = "url") -> str:
         return "小红书视频"
     if "youtube.com" in u or "youtu.be" in u:
         return "YouTube 视频"
+    if "podcasts.apple.com" in u or "itunes.apple.com" in u:
+        return "苹果播客"
     if "spotify.com" in u:
         return "Spotify 播客"
     if "ximalaya.com" in u:
@@ -215,6 +239,7 @@ DOWNLOAD_FAIL_HINT = "暂时无法下载音频，请稍后重试"
 CHARGE_VIDEO_HINT = "该视频为充电视频，暂时无法下载音频/视频"
 CHARGE_NEED_LOGIN_HINT = "该视频为充电视频，请读取已充电账号的登录状态"
 NO_MEDIA_HINT = "这篇笔记没有可转录的视频"
+APPLE_EPISODE_HINT = "请打开某一集，再粘贴这一集的苹果播客链接"
 
 
 def is_login_required(text: str) -> bool:
@@ -364,6 +389,8 @@ def friendly_error(text: str) -> str:
         return TEMPORARY_PARSE_HINT
     if NO_MEDIA_HINT in raw or "no video formats" in low:
         return NO_MEDIA_HINT
+    if APPLE_EPISODE_HINT in raw:
+        return APPLE_EPISODE_HINT
     if is_charge_need_login(raw):
         return CHARGE_NEED_LOGIN_HINT
     if is_charge_gated(raw):

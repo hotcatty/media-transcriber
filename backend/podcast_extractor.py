@@ -21,6 +21,8 @@ import re
 from typing import Optional
 from urllib.parse import urlparse
 
+from text_utils import APPLE_EPISODE_HINT, apple_episode_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -433,6 +435,26 @@ async def _fetch_ximalaya(url: str) -> PodcastInfo:
     raise ValueError(f"无法从喜马拉雅提取音频，请手动下载后上传: {url}")
 
 
+async def _fetch_apple_podcasts(url: str) -> PodcastInfo:
+    if not apple_episode_id(url):
+        raise ValueError(APPLE_EPISODE_HINT)
+    try:
+        info = await _ytdlp_extract_info(url)
+        if info and info.get("url"):
+            return PodcastInfo(
+                audio_url=info["url"],
+                title=info.get("title") or "苹果播客",
+                podcast_name=info.get("series") or info.get("uploader") or "",
+                duration=info.get("duration"),
+                cover_url=info.get("thumbnail"),
+                description=info.get("description") or "",
+            )
+    except Exception as e:
+        logger.error(f"yt-dlp 提取苹果播客失败: {e}")
+        raise ValueError(str(e) or APPLE_EPISODE_HINT) from e
+    raise ValueError("没法从这条苹果播客链接取出音频")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 统一入口
 # ──────────────────────────────────────────────────────────────────────────────
@@ -449,6 +471,8 @@ async def extract_podcast_audio(url: str) -> PodcastInfo:
         return await _fetch_xiaoyuzhou(url)
     elif platform == "ximalaya":
         return await _fetch_ximalaya(url)
+    elif platform == "apple_podcasts":
+        return await _fetch_apple_podcasts(url)
     else:
         # Apple Podcasts / Spotify / 其他：优先 yt-dlp
         try:
@@ -457,7 +481,7 @@ async def extract_podcast_audio(url: str) -> PodcastInfo:
                 return PodcastInfo(
                     audio_url=info["url"],
                     title=info.get("title", "播客节目"),
-                    podcast_name=info.get("uploader", ""),
+                    podcast_name=info.get("series") or info.get("uploader") or "",
                     duration=info.get("duration"),
                     cover_url=info.get("thumbnail"),
                     description=info.get("description", ""),

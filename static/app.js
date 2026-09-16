@@ -444,6 +444,7 @@ function platformOf(source) {
   if (u.includes("bilibili.com") || u.includes("b23.tv")) return "bilibili";
   if (u.includes("xiaoyuzhou")) return "xiaoyuzhou";
   if (u.includes("xiaohongshu.com") || u.includes("xhslink.com") || u.includes("xhslink.cn")) return "xiaohongshu";
+  if (u.includes("podcasts.apple.com") || u.includes("itunes.apple.com")) return "apple";
   if (u.includes("youtube.com") || u.includes("youtu.be")) return "youtube";
   return "generic";
 }
@@ -453,6 +454,7 @@ function platformIcon(source) {
   if (p === "bilibili") return mtAsset("/static/img/icon-bilibili.png");
   if (p === "xiaoyuzhou") return mtAsset("/static/img/icon-xiaoyuzhou.png");
   if (p === "xiaohongshu") return mtAsset("/static/img/icon-xiaohongshu.png");
+  if (p === "apple") return mtAsset("/static/img/icon-apple-podcasts.png");
   if (p === "youtube") return mtAsset("/static/img/icon-youtube-mark.svg");
   return mtAsset("/static/img/icon-xiaoyuzhou.png");
 }
