@@ -95,10 +95,12 @@ class FasterWhisperEngine(TranscriptionEngine):
         language: Optional[str] = None,
         word_timestamps: bool = False,
         condition_on_previous_text: bool = False,
+        initial_prompt: Optional[str] = None,
     ) -> ChunkResult:
         if self._model is None:
             self.load()
 
+        prompt = initial_prompt if initial_prompt is not None else prompt_for_language(language)
         segments_iter, info = self._model.transcribe(
             chunk.as_array(),
             language=language,
@@ -108,7 +110,7 @@ class FasterWhisperEngine(TranscriptionEngine):
             best_of=1,
             temperature=temperature_chain(),
             condition_on_previous_text=condition_on_previous_text,
-            initial_prompt=prompt_for_language(language),
+            initial_prompt=prompt,
             word_timestamps=word_timestamps,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 700, "speech_pad_ms": 250},

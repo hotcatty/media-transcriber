@@ -319,6 +319,7 @@ class VideoProcessor:
         video_title = None
         video_duration = None
         charge = False
+        page_meta = {"show": "", "description": ""}
         try:
             check_opts = self._ydl_opts(url, {
                 "quiet": True, "no_warnings": True, "noplaylist": True,
@@ -332,6 +333,15 @@ class VideoProcessor:
 
             video_title = info.get("title", "unknown")
             video_duration = info.get("duration")
+            page_meta = {
+                "show": (
+                    info.get("uploader")
+                    or info.get("channel")
+                    or info.get("creator")
+                    or ""
+                ).strip(),
+                "description": (info.get("description") or "").strip(),
+            }
             charge = await asyncio.to_thread(self._bilibili_is_charge, url, info)
             manual_subs: dict = info.get("subtitles") or {}
             auto_caps: dict = info.get("automatic_captions") or {}
@@ -341,7 +351,7 @@ class VideoProcessor:
 
             if not manual_langs and not auto_langs:
                 logger.info(f"视频无可用字幕: {url}")
-                return None, video_title, None, video_duration, charge
+                return None, video_title, None, video_duration, charge, page_meta
 
             all_langs_auto = {lang: "auto" for lang in auto_langs}
             all_langs_manual = {lang: "manual" for lang in manual_langs}
@@ -349,7 +359,7 @@ class VideoProcessor:
             ranked = self._rank_subtitle_langs(url, all_langs)
             if not ranked:
                 logger.info(f"没有可优先使用的字幕语言，回退音频: {url}")
-                return None, video_title, None, video_duration, charge
+                return None, video_title, None, video_duration, charge, page_meta
 
             sub_dir.mkdir(exist_ok=True)
             for prefer_lang in ranked:
@@ -395,17 +405,17 @@ class VideoProcessor:
 
                 segments = self._entries_to_segments(entries)
                 logger.info(f"字幕获取成功: lang={file_lang}, {len(segments)} 条")
-                return segments, video_title, file_lang, video_duration, charge
+                return segments, video_title, file_lang, video_duration, charge, page_meta
 
             logger.info("字幕均不可用，将回退至音频下载")
-            return None, video_title, None, video_duration, charge
+            return None, video_title, None, video_duration, charge, page_meta
 
         except Exception as e:
             clean_err = _clean(str(e))
             if self._is_xiaohongshu(url) and "no video formats" in clean_err.lower():
                 raise Exception(NO_MEDIA_HINT)
             logger.warning(f"字幕获取失败（将回退至音频下载）: {e}")
-            return None, video_title, None, video_duration, charge
+            return None, video_title, None, video_duration, charge, page_meta
         finally:
             if sub_dir.exists():
                 try:

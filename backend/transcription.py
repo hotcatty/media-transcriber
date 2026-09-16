@@ -32,6 +32,7 @@ import audio as audio_utils
 import config
 import settings_store
 from engines import AudioChunk, Segment, TranscriptionEngine
+from engines.base import whisper_initial_prompt
 from text_utils import to_simplified
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,8 @@ async def run_transcription(
     on_progress: Optional[Callable[[Progress], None]] = None,
     word_timestamps: Optional[bool] = None,
     condition_on_previous_text: Optional[bool] = None,
+    source_context: Optional[str] = None,
+    title: Optional[str] = None,
 ) -> TranscriptResult:
     """
     Transcribe a file, reporting progress as it goes.
@@ -277,11 +280,15 @@ async def run_transcription(
                     continue
                 chunk_t0[0] = time.time()
 
+                prompt = whisper_initial_prompt(
+                    detected, source_context=source_context, title=title,
+                )
                 result = engine.transcribe_chunk(
                     chunk,
                     language=detected,
                     word_timestamps=word_timestamps,
                     condition_on_previous_text=condition_on_previous_text,
+                    initial_prompt=prompt,
                 )
                 if detected is None:
                     detected = result.language

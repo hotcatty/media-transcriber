@@ -48,6 +48,7 @@ from text_utils import (
     is_login_required,
     is_real_title,
     fail_hint_for_task,
+    format_source_context,
     platform_label,
     safe_filename,
     strip_ansi,
@@ -864,6 +865,12 @@ class JobManager:
                         duration = duration
                 if duration:
                     self.store.update(task_id, duration=duration, title=title, flush=True)
+                ctx = format_source_context(
+                    show=info.podcast_name or "",
+                    description=info.description or "",
+                )
+                if ctx:
+                    self.store.update(task_id, source_context=ctx, flush=True)
                 self._freeze_budget(task_id, duration)
                 dl_guess = eta.prior_download(duration, "podcast")
                 dest = config.AUDIO_DIR / f"{task_id}.m4a"
@@ -891,13 +898,20 @@ class JobManager:
                     raise Cancelled()
                 async def _parse_url():
                     return await self.video.fetch_subtitles(task.source, config.TEMP_DIR)
-                sub_segs, sub_title, sub_lang, sub_dur, charge = await self._run_with_eta(
+                sub_segs, sub_title, sub_lang, sub_dur, charge, page_meta = await self._run_with_eta(
                     task_id, "parse", "正在解析视频…", eta.prior_parse(), _parse_url,
                 )
                 title = sub_title if is_real_title(sub_title or "") else title
                 duration = sub_dur or duration
                 if duration:
                     self.store.update(task_id, duration=duration, title=title, flush=True)
+                page_meta = page_meta or {}
+                ctx = format_source_context(
+                    show=page_meta.get("show") or "",
+                    description=page_meta.get("description") or "",
+                )
+                if ctx:
+                    self.store.update(task_id, source_context=ctx, flush=True)
                 if sub_segs:
                     segments = sub_segs
                     origin = "subtitle"
@@ -1031,6 +1045,8 @@ class JobManager:
 
             settings = settings_store.get_all()
             engine = engines.resolve_engine(settings)
+            latest = self.store.get(task_id)
+            source_context = (latest.source_context if latest else "") or ""
 
             async def on_progress(p: Progress):
                 if cancel.is_set():
@@ -1065,6 +1081,8 @@ class JobManager:
                 on_progress=on_progress,
                 word_timestamps=bool(settings.get("word_timestamps")),
                 condition_on_previous_text=bool(settings.get("condition_on_previous_text")),
+                source_context=source_context,
+                title=title,
             )
             segments = result.segments
             language = result.language or language

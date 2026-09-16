@@ -100,6 +100,7 @@ class CloudTranscriptionEngine(TranscriptionEngine):
         language: Optional[str] = None,
         word_timestamps: bool = False,
         condition_on_previous_text: bool = False,
+        initial_prompt: Optional[str] = None,
     ) -> ChunkResult:
         self.load()
         path = chunk.as_file(suffix=".m4a")
@@ -111,6 +112,9 @@ class CloudTranscriptionEngine(TranscriptionEngine):
         }
         if language:
             data["language"] = language.split("-")[0]
+        prompt = initial_prompt if initial_prompt is not None else None
+        if prompt:
+            data["prompt"] = prompt
 
         with open(path, "rb") as f:
             resp = requests.post(

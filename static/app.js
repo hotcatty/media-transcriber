@@ -1006,6 +1006,51 @@ async function copyText() {
   }
 }
 
+function buildCopyForAi(task, transcript) {
+  const lines = [
+    "下面是一份已经转写完成的内容。请直接基于它来整理，不要重新转写，也不要另写一版所谓更优的全文。",
+    "",
+    "请按顺序完成：",
+    "1. 给出干净、简洁且完整的总结",
+    "2. 提炼并展示重点内容或金句",
+    "3. 如果你支持生成文件，再输出一份包含这份精准全文转录的 text 文档",
+    "",
+  ];
+  const title = (task && task.title) || "";
+  const source = (task && task.source) || "";
+  const ctx = ((task && task.source_context) || "").trim();
+  if (title || (source && looksLikeUrl(source)) || ctx) {
+    lines.push("【来源】");
+    if (title) lines.push(`标题：${title}`);
+    if (source && looksLikeUrl(source)) {
+      lines.push(`链接：${source.startsWith("http") ? source : `https://${source}`}`);
+    }
+    if (ctx) {
+      lines.push("背景：");
+      lines.push(ctx.length > 6000 ? `${ctx.slice(0, 6000).trimEnd()}…` : ctx);
+    }
+    lines.push("");
+  }
+  lines.push("【全文转录】");
+  lines.push((transcript || "").trim());
+  return lines.join("\n");
+}
+
+async function copyForAi() {
+  const text = lastText || $("sheetBody").textContent;
+  if (!text || !text.trim()) {
+    showToast("还没有可复制的正文");
+    return;
+  }
+  const payload = buildCopyForAi(currentTask, text);
+  try {
+    await navigator.clipboard.writeText(payload);
+    showToast("已复制给AI");
+  } catch (_) {
+    showToast("复制失败，请稍后再试");
+  }
+}
+
 async function downloadFmt(fmt) {
   if (!currentTaskId) return;
   try {
@@ -1328,6 +1373,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("importCookieBtn").onclick = importCookies;
 
   $("copyBtn").onclick = copyText;
+  $("copyAiBtn").onclick = copyForAi;
   $("openAudioBtn").onclick = revealAudio;
   $("exportBtn").onclick = (e) => {
     e.stopPropagation();

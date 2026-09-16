@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse, urlunparse
@@ -480,6 +481,36 @@ def is_cjk_text(text: str, sample: int = 400) -> bool:
     if not head:
         return False
     return len(_CJK.findall(head)) / max(len(head), 1) > 0.15
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+SOURCE_CONTEXT_MAX = 8000
+
+
+def clean_page_text(raw: str) -> str:
+    """Strip tags and collapse whitespace from yt-dlp / OG / shownotes HTML."""
+    if not raw:
+        return ""
+    text = unescape(_HTML_TAG_RE.sub(" ", raw))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def format_source_context(*, show: str = "", description: str = "") -> str:
+    """Compact page context persisted on the task for Whisper and copy-for-AI."""
+    show = clean_page_text(show)
+    desc = clean_page_text(description)
+    parts: list[str] = []
+    if show:
+        parts.append(f"节目：{show}")
+    if desc:
+        if show and desc.startswith(show):
+            desc = desc[len(show):].lstrip(" ：:-—|/|")
+        if desc:
+            parts.append(desc)
+    text = "\n".join(parts).strip()
+    if len(text) > SOURCE_CONTEXT_MAX:
+        text = text[:SOURCE_CONTEXT_MAX].rstrip()
+    return text
 
 
 def join_segment_texts(texts: list[str]) -> str:

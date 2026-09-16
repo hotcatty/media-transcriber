@@ -21,7 +21,7 @@ import re
 from typing import Optional
 from urllib.parse import urlparse
 
-from text_utils import APPLE_EPISODE_HINT, apple_episode_id
+from text_utils import APPLE_EPISODE_HINT, apple_episode_id, clean_page_text
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +172,21 @@ async def _parse_xiaoyuzhou_html(url: str) -> PodcastInfo:
     html = await asyncio.to_thread(_get)
 
     title = _extract_og_meta(html, "title") or _extract_title_tag(html) or "播客节目"
-    podcast_name = _extract_og_meta(html, "site_name") or ""
+    site_name = _extract_og_meta(html, "site_name") or ""
+    podcast_name = "" if site_name in ("小宇宙", "小宇宙FM", "Xiaoyuzhou") else site_name
     cover_url = _extract_og_meta(html, "image")
-    description = _extract_og_meta(html, "description") or ""
+    next_data = _next_data(html)
+    description = (
+        _deep_find_key_text(next_data, ("shownotes", "showNotes", "show_notes"))
+        or _deep_find_key_text(next_data, ("description",))
+        or _extract_og_meta(html, "description")
+        or ""
+    )
+    podcast_from_page = _deep_find_key_text(
+        next_data, ("podcastName", "podcast_name"), min_len=4,
+    )
+    if podcast_from_page and podcast_from_page != title:
+        podcast_name = podcast_from_page
 
     # ── 尝试从 JSON-LD 提取 contentUrl ───────────────────────────────────────
     audio_url = _extract_audio_from_jsonld(html)
@@ -256,6 +268,29 @@ def _next_data(html: str):
         return json.loads(m.group(1))
     except Exception:
         return None
+
+
+def _deep_find_key_text(obj, keys, min_len: int = 20, depth: int = 0) -> str:
+    """First reasonably long string under any of `keys` in a nested payload."""
+    if obj is None or depth > 12:
+        return ""
+    if isinstance(obj, dict):
+        for key in keys:
+            val = obj.get(key)
+            if isinstance(val, str):
+                s = val.strip()
+                if len(s) >= min_len:
+                    return s
+        for v in obj.values():
+            found = _deep_find_key_text(v, keys, min_len, depth + 1)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj[:40]:
+            found = _deep_find_key_text(item, keys, min_len, depth + 1)
+            if found:
+                return found
+    return ""
 
 
 def _deep_find_duration(obj, depth: int = 0) -> Optional[float]:
@@ -435,19 +470,127 @@ async def _fetch_ximalaya(url: str) -> PodcastInfo:
     raise ValueError(f"无法从喜马拉雅提取音频，请手动下载后上传: {url}")
 
 
+def _apple_people_shelf(title: str) -> bool:
+    t = (title or "").lower()
+    return any(k in t for k in ("嘉宾", "主持", "guest", "host"))
+
+
+def _apple_page_payload(raw):
+    if isinstance(raw, dict) and isinstance(raw.get("data"), list) and raw["data"]:
+        node = raw["data"][0]
+        return node.get("data") if isinstance(node, dict) else None
+    if isinstance(raw, list) and raw and isinstance(raw[0], dict):
+        return raw[0].get("data")
+    return None
+
+
+def _scrape_apple_episode_page(url: str) -> dict:
+    """
+    Apple episode pages embed show notes and a host/guest shelf in
+    serialized-server-data. yt-dlp already has the audio URL and a description;
+    this pass is for names and a longer notes blob when the extractor truncated.
+    """
+    import json
+    import requests
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        ),
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+        resp.raise_for_status()
+        resp.encoding = "utf-8"
+        html = resp.text
+    except Exception as e:
+        logger.warning(f"苹果播客页面抓取失败: {e}")
+        return {}
+
+    m = re.search(
+        r'<script[^>]*id=["\']serialized-server-data["\'][^>]*>(.*?)</script>',
+        html, re.S | re.I,
+    )
+    if not m:
+        return {}
+    try:
+        raw = json.loads(m.group(1))
+    except Exception:
+        return {}
+    payload = _apple_page_payload(raw)
+    if not isinstance(payload, dict):
+        return {}
+
+    people: list[str] = []
+    notes = ""
+    for shelf in payload.get("shelves") or []:
+        if not isinstance(shelf, dict):
+            continue
+        items = shelf.get("items") or []
+        if _apple_people_shelf(str(shelf.get("title") or "")):
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                name = (it.get("title") or "").strip()
+                if name and name not in people:
+                    people.append(name)
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            text = it.get("text") if it.get("$kind") == "Paragraph" else None
+            if isinstance(text, str) and len(text) > len(notes):
+                notes = text
+
+    show = ""
+    for btn in payload.get("headerButtonItems") or []:
+        model = btn.get("model") if isinstance(btn, dict) else None
+        if not isinstance(model, dict):
+            continue
+        show = show or (model.get("showTitle") or "")
+        summary = model.get("summary") or ""
+        if isinstance(summary, str) and len(summary) > len(notes):
+            notes = summary
+
+    return {"people": people, "description": notes, "show": show}
+
+
+def _merge_apple_description(ytdlp_desc: str, extra: dict) -> str:
+    page_notes = (extra.get("description") or "").strip()
+    description = (ytdlp_desc or "").strip()
+    if len(clean_page_text(page_notes)) > len(clean_page_text(description)):
+        description = page_notes
+    people = [p for p in (extra.get("people") or []) if p]
+    if people:
+        line = "嘉宾：" + "、".join(people)
+        description = f"{line}\n{description}".strip() if description else line
+    return description
+
+
 async def _fetch_apple_podcasts(url: str) -> PodcastInfo:
     if not apple_episode_id(url):
         raise ValueError(APPLE_EPISODE_HINT)
     try:
         info = await _ytdlp_extract_info(url)
         if info and info.get("url"):
+            extra = {}
+            try:
+                extra = await asyncio.to_thread(_scrape_apple_episode_page, url)
+            except Exception as e:
+                logger.warning(f"苹果播客页面信息读取失败: {e}")
             return PodcastInfo(
                 audio_url=info["url"],
                 title=info.get("title") or "苹果播客",
-                podcast_name=info.get("series") or info.get("uploader") or "",
+                podcast_name=(
+                    info.get("series")
+                    or info.get("uploader")
+                    or (extra.get("show") if extra else "")
+                    or ""
+                ),
                 duration=info.get("duration"),
                 cover_url=info.get("thumbnail"),
-                description=info.get("description") or "",
+                description=_merge_apple_description(info.get("description") or "", extra or {}),
             )
     except Exception as e:
         logger.error(f"yt-dlp 提取苹果播客失败: {e}")

@@ -96,18 +96,20 @@ class MLXWhisperEngine(TranscriptionEngine):
         language: Optional[str] = None,
         word_timestamps: bool = False,
         condition_on_previous_text: bool = False,
+        initial_prompt: Optional[str] = None,
     ) -> ChunkResult:
         if not self._loaded:
             self.load()
         import mlx_whisper
 
+        prompt = initial_prompt if initial_prompt is not None else prompt_for_language(language)
         result = mlx_whisper.transcribe(
             chunk.as_array(),
             path_or_hf_repo=self._local_path,
             language=language,
             temperature=temperature_chain(),
             condition_on_previous_text=condition_on_previous_text,
-            initial_prompt=prompt_for_language(language),
+            initial_prompt=prompt,
             word_timestamps=word_timestamps,
             compression_ratio_threshold=2.4,
             logprob_threshold=-1.0,

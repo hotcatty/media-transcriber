@@ -62,6 +62,7 @@ class Task:
     engine: Optional[str] = None
     model: Optional[str] = None
     origin: Optional[str] = None     # subtitle | whisper
+    source_context: str = ""         # page/show notes used as Whisper + copy-for-AI context
     created_at: str = field(default_factory=_now)
     started_at: Optional[str] = None
     finished_at: Optional[str] = None

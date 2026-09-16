@@ -188,6 +188,7 @@ class TranscriptionEngine(ABC):
         language: Optional[str] = None,
         word_timestamps: bool = False,
         condition_on_previous_text: bool = False,
+        initial_prompt: Optional[str] = None,
     ) -> ChunkResult: ...
 
     def unload(self) -> None:
@@ -206,6 +207,50 @@ def prompt_for_language(language: Optional[str]) -> Optional[str]:
     if language and language.lower().startswith("zh"):
         return ZH_PROMPT
     return None
+
+
+# Whisper only keeps ~224 tokens of initial_prompt. CJK is roughly 1 token per
+# character, so this budget leaves room for ZH_PROMPT plus names / show notes.
+WHISPER_PROMPT_BUDGET = 220
+
+
+def whisper_initial_prompt(
+    language: Optional[str],
+    *,
+    source_context: Optional[str] = None,
+    title: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Bias decoding toward known names and the right script.
+
+    Page context (Xiaoyuzhou shownotes, video descriptions) is useful for proper
+    nouns, but a long dump would crowd out the punctuation/simplified-Chinese
+    hint. Language hint is placed last so it survives if the prompt is trimmed.
+    """
+    lang = prompt_for_language(language) or ""
+    parts: list[str] = []
+    t = (title or "").strip()
+    ctx = " ".join((source_context or "").split())
+    if t:
+        parts.append(t)
+    if ctx:
+        if t and ctx.startswith(t):
+            ctx = ctx[len(t):].lstrip(" ：:|-")
+        if ctx:
+            parts.append(ctx)
+    body = " ".join(parts).strip()
+    if not lang and not body:
+        return None
+    if not body:
+        return lang or None
+    room = WHISPER_PROMPT_BUDGET - (len(lang) + 1 if lang else 0)
+    if room < 16:
+        return lang or body[:WHISPER_PROMPT_BUDGET]
+    if len(body) > room:
+        body = body[:room].rstrip()
+    if lang:
+        return f"{body} {lang}"
+    return body
 
 
 def temperature_chain() -> tuple:
