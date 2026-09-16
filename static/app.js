@@ -162,20 +162,28 @@ function serviceZipFor(platform) {
   return "";
 }
 
-function fetchServicePackage() {
+function startZipDownload() {
   const platform = currentServicePlatform();
   const zip = serviceZipFor(platform);
   if (!zip) {
     opNote("download.skip", { reason: "no-package", platform });
     return false;
   }
-  opNote("download.start", { platform, zip, via: "anchor" });
+  opNote("download.start", { platform, zip, via: "blank" });
+  const a = document.createElement("a");
+  a.href = zip;
+  a.target = "_blank";
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
   return true;
 }
 
 function goDownloadService() {
   opNote("download.click", { platform: currentServicePlatform() });
   openServiceGuide();
+  startZipDownload();
 }
 
 function waitingForService(task) {
@@ -675,7 +683,7 @@ function renderJob(task) {
         if (s.need_service) {
           const zip = serviceZipFor(currentServicePlatform());
           const go = zip
-            ? `<a class="link" data-download-service="1" href="${escapeHtml(zip)}" rel="noopener">前往下载</a>`
+            ? `<a class="link" data-download-service="1" href="${escapeHtml(zip)}" target="_blank" rel="noopener">前往下载</a>`
             : `<span class="step-hint">请用电脑打开后再下载</span>`;
           extra = `<span class="step-extra"><span class="step-hint">首次使用需要下载语音分析模型</span>${go}</span>`;
         } else {
@@ -1232,6 +1240,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("jobPanel").addEventListener("click", async (e) => {
     if (e.target.closest("[data-download-service]")) {
+      e.preventDefault();
       e.stopPropagation();
       goDownloadService();
       return;

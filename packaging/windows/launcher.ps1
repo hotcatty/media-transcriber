@@ -28,7 +28,7 @@ function Copy-Diagnostics([string]$Message) {
     $lines = @(
         "转录小工具 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
-        "launcher=windows-20260910h",
+        "launcher=windows-20260916a",
         "os=$([Environment]::OSVersion.VersionString)",
         "root=$Root",
         "error=$Message",
@@ -112,6 +112,7 @@ function Show-DiagWindow([string]$Text) {
 
 function Fail([string]$Message) {
     Write-Log "ERROR: $Message"
+    Stop-Bootstrap
     Copy-Diagnostics $Message
     $diag = Join-Path $LogDir "media-transcriber-diag.txt"
     $text = if (Test-Path $diag) { Get-Content $diag -Raw -Encoding UTF8 } else { $Message }
@@ -129,6 +130,88 @@ function Test-HelperReady {
     } catch {
         return $false
     }
+}
+
+function Start-Bootstrap {
+    if (Test-HelperReady) { return }
+    $htmlPath = Join-Path $Root "waiting.html"
+    if (-not (Test-Path $htmlPath)) { return }
+    try {
+        $script:BootListener = New-Object System.Net.HttpListener
+        $script:BootListener.Prefixes.Add("$Local/")
+        $script:BootListener.Start()
+    } catch {
+        Write-Log "bootstrap bind failed"
+        $script:BootListener = $null
+        return
+    }
+    $script:BootRunspace = [runspacefactory]::CreateRunspace()
+    $script:BootRunspace.Open()
+    $script:BootPS = [powershell]::Create()
+    $script:BootPS.Runspace = $script:BootRunspace
+    [void]$script:BootPS.AddScript({
+        param($Listener, $HtmlPath)
+        $html = [IO.File]::ReadAllBytes($HtmlPath)
+        $ping = [Text.Encoding]::UTF8.GetBytes('{"ok":true,"app":"media-transcriber","preparing":true}')
+        try {
+            while ($Listener.IsListening) {
+                $ctx = $Listener.GetContext()
+                $path = $ctx.Request.Url.AbsolutePath
+                $res = $ctx.Response
+                try {
+                    $origin = $ctx.Request.Headers["Origin"]
+                    if ([string]::IsNullOrWhiteSpace($origin)) { $origin = "*" }
+                    $res.Headers.Add("Access-Control-Allow-Origin", $origin)
+                    $res.Headers.Add("Access-Control-Allow-Private-Network", "true")
+                    if ($path -eq "/api/ping") {
+                        $res.ContentType = "application/json; charset=utf-8"
+                        $bytes = $ping
+                    } else {
+                        $res.ContentType = "text/html; charset=utf-8"
+                        $bytes = $html
+                    }
+                    $res.ContentLength64 = $bytes.Length
+                    $res.OutputStream.Write($bytes, 0, $bytes.Length)
+                } catch {
+                } finally {
+                    try { $res.Close() } catch {}
+                }
+            }
+        } catch {}
+    }).AddArgument($script:BootListener).AddArgument($htmlPath)
+    $script:BootAsync = $script:BootPS.BeginInvoke()
+}
+
+function Stop-Bootstrap {
+    if ($script:BootListener) {
+        try { $script:BootListener.Stop() } catch {}
+        try { $script:BootListener.Close() } catch {}
+        $script:BootListener = $null
+    }
+    if ($script:BootPS) {
+        try { $script:BootPS.Stop() } catch {}
+        try { $script:BootPS.Dispose() } catch {}
+        $script:BootPS = $null
+    }
+    if ($script:BootRunspace) {
+        try { $script:BootRunspace.Dispose() } catch {}
+        $script:BootRunspace = $null
+    }
+}
+
+function Show-WaitingPage {
+    if (-not (Test-HelperReady)) {
+        Start-Bootstrap
+        for ($i = 0; $i -lt 10; $i++) {
+            try {
+                Invoke-WebRequest -Uri "$Local/api/ping" -UseBasicParsing -TimeoutSec 1 | Out-Null
+                break
+            } catch {
+                Start-Sleep -Milliseconds 200
+            }
+        }
+    }
+    try { Start-Process $Local } catch { Write-Log "open waiting page failed" }
 }
 
 function Sync-AppDir([string]$From, [string]$To) {
@@ -176,6 +259,7 @@ function GitHub-Fetch([string]$Dest, [string]$Url) {
 
 if (Test-HelperReady) {
     Write-Log "already running"
+    try { Start-Process $Local } catch {}
     exit 0
 }
 
@@ -365,6 +449,8 @@ function Ensure-Venv {
 
 function Start-Server {
     if (Test-HelperReady) { return }
+    Stop-Bootstrap
+    Start-Sleep -Milliseconds 200
     $py = Join-Path $Data "venv\Scripts\python.exe"
     $app = Join-Path $Data "app"
     Write-Log "start server"
@@ -381,6 +467,7 @@ function Wait-Ready {
 }
 
 try {
+    Show-WaitingPage
     Ensure-Uv
     Refresh-App
     Ensure-Venv
@@ -389,6 +476,7 @@ try {
     Wait-Ready
     Write-Log "launch ok"
 } catch {
+    Stop-Bootstrap
     Fail "没法安装运行环境。请检查网络后再打开一次。"
 }
 exit 0

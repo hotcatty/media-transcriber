@@ -14,6 +14,7 @@ mkdir -p "$APP/app" "$APP/bin"
 
 cp "$ROOT/packaging/windows/start.bat" "$APP/"
 cp "$ROOT/packaging/windows/launcher.ps1" "$APP/"
+cp "$ROOT/packaging/macos/Transcriber.app/Contents/Resources/waiting.html" "$APP/"
 cp "$ROOT/start.py" "$ROOT/requirements.txt" "$ROOT/LICENSE" "$ROOT/README.md" "$APP/app/"
 rsync -a --delete --exclude __pycache__ --exclude temp --exclude .venv \
   "$ROOT/backend/" "$APP/app/backend/"
