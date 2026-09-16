@@ -1013,7 +1013,7 @@ function buildCopyForAi(task, transcript) {
     "请按顺序完成：",
     "1. 给出干净、简洁且完整的总结",
     "2. 提炼并展示重点内容或金句",
-    "3. 如果你支持生成文件，再输出一份包含这份精准全文转录的 text 文档",
+    "3. 如果你支持生成文件，再输出一份包含这份精准全文转录的 text 文档。原话不要改写，但必须按语义分成清晰段落：一段一个话题或一轮发言，段与段之间空一行，不要整篇连成没有换行的一块文字。",
     "",
   ];
   const title = (task && task.title) || "";
@@ -1045,7 +1045,7 @@ async function copyForAi() {
   const payload = buildCopyForAi(currentTask, text);
   try {
     await navigator.clipboard.writeText(payload);
-    showToast("已复制给AI");
+    showToast("已复制，请粘贴给 AI");
   } catch (_) {
     showToast("复制失败，请稍后再试");
   }
