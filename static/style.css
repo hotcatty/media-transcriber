@@ -482,6 +482,7 @@ img.step-ico.is-spin {
 #serviceOverlay .modal {
   overflow-y: auto;
   gap: 32px;
+  padding: 24px;
 }
 
 .login-row {
@@ -613,6 +614,7 @@ img.step-ico.is-spin {
 #historyOverlay .modal {
   gap: 24px;
   overflow: hidden;
+  padding: 24px;
 }
 
 @container (max-width: 620px) {

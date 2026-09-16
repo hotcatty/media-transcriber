@@ -444,7 +444,7 @@ function platformIcon(source) {
   const p = platformOf(source);
   if (p === "bilibili") return mtAsset("/static/img/icon-bilibili.png");
   if (p === "xiaoyuzhou") return mtAsset("/static/img/icon-xiaoyuzhou.png");
-  if (p === "xiaohongshu") return mtAsset("/static/img/icon-xiaohongshu.svg");
+  if (p === "xiaohongshu") return mtAsset("/static/img/icon-xiaohongshu.png");
   if (p === "youtube") return mtAsset("/static/img/icon-youtube-mark.svg");
   return mtAsset("/static/img/icon-xiaoyuzhou.png");
 }
