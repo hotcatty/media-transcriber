@@ -121,6 +121,10 @@ async def _ytdlp_extract_info(url: str) -> Optional[dict]:
         import config as _cfg
         if _cfg.COOKIE_FILE.exists():
             opts["cookiefile"] = str(_cfg.COOKIE_FILE)
+        if getattr(_cfg, "YOUTUBE_PROXY", "") and (
+            "youtube.com" in (url or "").lower() or "youtu.be" in (url or "").lower()
+        ):
+            opts["proxy"] = _cfg.YOUTUBE_PROXY
     except Exception:
         pass
 
@@ -174,6 +178,12 @@ async def _parse_xiaoyuzhou_html(url: str) -> PodcastInfo:
     title = _extract_og_meta(html, "title") or _extract_title_tag(html) or "播客节目"
     site_name = _extract_og_meta(html, "site_name") or ""
     podcast_name = "" if site_name in ("小宇宙", "小宇宙FM", "Xiaoyuzhou") else site_name
+    if podcast_name and (
+        "." in podcast_name
+        or "xiaoyuzhou" in podcast_name.lower()
+        or podcast_name.lower().startswith("www")
+    ):
+        podcast_name = ""
     cover_url = _extract_og_meta(html, "image")
     next_data = _next_data(html)
     description = (
@@ -187,6 +197,10 @@ async def _parse_xiaoyuzhou_html(url: str) -> PodcastInfo:
     )
     if podcast_from_page and podcast_from_page != title:
         podcast_name = podcast_from_page
+    if not podcast_name:
+        quoted = re.search(r"《([^》]{2,40})》", description or "")
+        if quoted:
+            podcast_name = quoted.group(1).strip()
 
     # ── 尝试从 JSON-LD 提取 contentUrl ───────────────────────────────────────
     audio_url = _extract_audio_from_jsonld(html)

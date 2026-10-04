@@ -49,9 +49,11 @@ from text_utils import (
     is_real_title,
     fail_hint_for_task,
     format_source_context,
+    is_youtube_url,
     platform_label,
     safe_filename,
     strip_ansi,
+    YOUTUBE_DISABLED_HINT,
 )
 from transcription import Cancelled, Progress, run_transcription
 from video_processor import VideoProcessor
@@ -69,6 +71,13 @@ def _fmt_model_size(done: int, total: int) -> str:
     if not total:
         return f"{one(done)} / 1.6G"
     return f"{one(done)} / {one(total)}"
+
+
+def _fw_weights_ready() -> bool:
+    root = Path(config.MODELS_DIR)
+    if not root.exists():
+        return False
+    return any(root.rglob("model.bin"))
 
 
 def _has_audio_file(task: Task) -> bool:
@@ -92,7 +101,7 @@ def pipeline_steps(task: Task) -> list:
     detail = task.detail or {}
     show_model = (
         stage == "downloading_model"
-        or detail.get("model_step") in ("current", "done")
+        or detail.get("model_step") == "current"
     )
 
     if upload:
@@ -119,7 +128,7 @@ def pipeline_steps(task: Task) -> list:
             ("parse", "解析视频") if sid == "parse" else (sid, lab)
             for sid, lab in defs
         ]
-        defs = [("model", "下载turbo模型")] + renamed
+        defs = [("model", "下载语音模型")] + renamed
     ids = [d[0] for d in defs]
 
     def cursor() -> int:
@@ -332,13 +341,24 @@ def _attach_step_progress(task: Task, steps: list) -> list:
     return steps
 
 
-def public_task(task: Task) -> dict:
+def public_task(task: Task, queue_ahead: int = 0,
+                queue_position: int = 0, queue_total: int = 0) -> dict:
     d = task.to_dict()
     d["resumable"] = task.resumable
     d["title"] = display_title(task.title, task.source, task.source_type, task.created_at)
     d["has_audio"] = _has_audio_file(task)
     d["origin"] = task.origin
     d["created_label"] = format_slash_when(task.created_at)
+    d["queue_ahead"] = max(0, int(queue_ahead or 0))
+    pos = max(0, int(queue_position or 0))
+    total = max(0, int(queue_total or 0))
+    if not pos and d["queue_ahead"]:
+        pos = d["queue_ahead"] + 1
+    if pos and not total:
+        total = pos
+    d["queue_position"] = pos
+    d["queue_total"] = total
+    d["audio_url"] = f"/api/tasks/{task.id}/audio" if d["has_audio"] else ""
     site = cookie_import.site_from_url(task.source)
     meta = cookie_import.site_info(site)
     d["login_site"] = meta["id"]
@@ -350,8 +370,19 @@ def public_task(task: Task) -> dict:
         for s in steps:
             if s.get("id") == "download" and s.get("state") == "done":
                 s["action"] = "view_audio"
-                s["action_label"] = "查看音频"
+                s["action_label"] = "试听"
                 break
+    if task.status == QUEUED:
+        pos = d["queue_position"] or 1
+        total = d["queue_total"] or pos
+        for s in steps:
+            s["state"] = "pending"
+            s.pop("hint", None)
+        if steps:
+            steps[0]["state"] = "current"
+            steps[0]["hint"] = (
+                f"当前服务器繁忙，您正在排队，第{pos}位 / 共{total}位"
+            )
     d["steps"] = steps
     if task.status in (FAILED, NEEDS_LOGIN):
         hint = fail_hint_for_task(
@@ -394,6 +425,7 @@ class JobManager:
         self.sse: Dict[str, List[asyncio.Queue]] = {}
         self._worker: Optional[asyncio.Task] = None
         self._queued: set[str] = set()
+        self._wait_ids: list[str] = []
 
     def reload_cookies(self) -> None:
         self.video = VideoProcessor()
@@ -406,8 +438,29 @@ class JobManager:
         if self._worker and not self._worker.done():
             self._worker.cancel()
 
+    def queue_line(self, task_id: str) -> tuple[int, int]:
+        """1-based place in line and how many jobs are in the line (running + waiting)."""
+        line: list[str] = []
+        for t in self.store.active():
+            if t.status == RUNNING and t.id not in line:
+                line.append(t.id)
+        for tid in self._wait_ids:
+            if tid not in line:
+                line.append(tid)
+        if task_id not in line:
+            return (0, len(line))
+        return (line.index(task_id) + 1, len(line))
+
+    def queue_ahead(self, task_id: str) -> int:
+        pos, _total = self.queue_line(task_id)
+        return max(0, pos - 1) if pos else 0
+
     async def broadcast(self, task: Task) -> None:
-        payload = public_task(task)
+        pos, total = self.queue_line(task.id)
+        payload = public_task(
+            task, queue_ahead=max(0, pos - 1) if pos else 0,
+            queue_position=pos, queue_total=total,
+        )
         queues = list(self.sse.get(task.id, []))
         dead = []
         for q in queues:
@@ -454,6 +507,19 @@ class JobManager:
 
     async def submit_url(self, url: str) -> Task:
         url = extract_share_url(url)
+        if config.PUBLIC_WEB and is_youtube_url(url):
+            now = datetime.now()
+            fallback = f"{platform_label(url, 'url')} · {now.month}月{now.day}日 {now.hour:02d}:{now.minute:02d}"
+            return self.store.create(
+                source=url,
+                source_type="url",
+                title=fallback,
+                status=FAILED,
+                stage="parse",
+                message=YOUTUBE_DISABLED_HINT,
+                error=YOUTUBE_DISABLED_HINT,
+                finished_at=_now(),
+            )
         existing = self.find_active(url)
         if existing:
             return existing
@@ -509,6 +575,9 @@ class JobManager:
         if ev:
             ev.set()
         task = self.store.get(task_id)
+        if task_id in self._wait_ids:
+            self._wait_ids.remove(task_id)
+        self._queued.discard(task_id)
         if task and task.status in (QUEUED, RUNNING, INTERRUPTED, NEEDS_LOGIN):
             self.store.update(
                 task_id, status=CANCELLED, stage="cancelled",
@@ -516,17 +585,30 @@ class JobManager:
                 flush=True,
             )
             await self.broadcast(self.store.get(task_id))
+        await self._notify_waiters()
 
     async def _enqueue(self, task_id: str) -> None:
         if task_id in self._queued:
             return
         self._queued.add(task_id)
+        if task_id not in self._wait_ids:
+            self._wait_ids.append(task_id)
         await self.queue.put(task_id)
+        await self._notify_waiters()
+
+    async def _notify_waiters(self) -> None:
+        for tid in list(self._wait_ids):
+            task = self.store.get(tid)
+            if task and task.status == QUEUED:
+                await self.broadcast(task)
 
     async def _loop(self) -> None:
         while True:
             task_id = await self.queue.get()
             self._queued.discard(task_id)
+            if task_id in self._wait_ids:
+                self._wait_ids.remove(task_id)
+            await self._notify_waiters()
             try:
                 await self._run(task_id)
             except asyncio.CancelledError:
@@ -656,6 +738,9 @@ class JobManager:
             if model_fetch.mlx_model_ready(repo, config.MODELS_DIR):
                 return
         elif getattr(engine, "_model", None) is not None or getattr(engine, "_loaded", False):
+            return
+        elif _fw_weights_ready():
+            await asyncio.to_thread(engine.load)
             return
 
         started = time.time()
@@ -909,6 +994,7 @@ class JobManager:
                 ctx = format_source_context(
                     show=page_meta.get("show") or "",
                     description=page_meta.get("description") or "",
+                    tags=page_meta.get("tags") or [],
                 )
                 if ctx:
                     self.store.update(task_id, source_context=ctx, flush=True)

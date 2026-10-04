@@ -229,7 +229,7 @@ class TaskStore:
                     setattr(task, k, v)
             self._dirty = True
             if flush:
-                self.flush()
+                self.flush(force=True)
             return task
 
     def list(self, limit: int = 100, include_active: bool = True) -> List[Task]:

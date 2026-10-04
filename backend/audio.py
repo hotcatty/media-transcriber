@@ -190,13 +190,16 @@ def transcode_to_m4a(src: str | Path, dest: str | Path) -> str:
 
 
 def download_audio_url_to_m4a(url: str, dest: str | Path,
-                              user_agent: Optional[str] = None) -> str:
+                              user_agent: Optional[str] = None,
+                              referer: Optional[str] = None) -> str:
     """Fetch a direct audio URL and normalise it in one ffmpeg pass."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = [FFMPEG, "-y", "-nostdin", "-v", "error"]
     if user_agent:
         cmd += ["-user_agent", user_agent]
+    if referer:
+        cmd += ["-headers", f"Referer: {referer}\r\n"]
     cmd += [
         "-i", url, "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE),
         "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", str(dest),

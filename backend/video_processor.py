@@ -11,12 +11,16 @@ import logging
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
+import audio as audio_utils
 import config
 from engines import Segment
 from text_utils import (
     CHARGE_NEED_LOGIN_HINT,
     CHARGE_VIDEO_HINT,
+    LOGIN_PARSE_HINT,
     NO_MEDIA_HINT,
+    YOUTUBE_DISABLED_HINT,
+    YOUTUBE_UNREACHABLE_HINT,
     extract_share_url,
     is_charge_gated,
     is_xiaohongshu_url,
@@ -36,6 +40,11 @@ class VideoProcessor:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
+    )
+    _XHS_UA = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+        "Mobile/15E148 Safari/604.1"
     )
 
     # ffmpeg 路径（自动探测，兼容 Homebrew on Apple Silicon）
@@ -68,6 +77,8 @@ class VideoProcessor:
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,
+            'socket_timeout': 15,
+            'retries': 1,
             'http_headers': {
                 'User-Agent': self._UA,
             },
@@ -77,6 +88,8 @@ class VideoProcessor:
             logger.info(f"已加载 Cookie 文件: {self.COOKIE_FILE}")
         else:
             logger.info("未找到 cookies.txt，以匿名模式访问（B站等平台可能受限）")
+        if config.YOUTUBE_PROXY:
+            logger.info("已配置 YouTube 代理出口")
 
     def _headers_for(self, url: str) -> dict:
         headers = {"User-Agent": self._UA}
@@ -84,6 +97,7 @@ class VideoProcessor:
         if "bilibili.com" in u or "b23.tv" in u:
             headers["Referer"] = "https://www.bilibili.com/"
         elif "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u:
+            headers["User-Agent"] = self._XHS_UA
             headers["Referer"] = "https://www.xiaohongshu.com/"
             headers["Origin"] = "https://www.xiaohongshu.com"
         elif "youtube.com" in u or "youtu.be" in u:
@@ -102,7 +116,29 @@ class VideoProcessor:
             opts["extractor_args"] = {
                 "youtube": {"player_client": ["android", "ios", "web"]}
             }
+            opts["retries"] = 0
+            opts["extractor_retries"] = 0
+            if config.YOUTUBE_PROXY:
+                opts["proxy"] = config.YOUTUBE_PROXY
         return opts
+
+    def _ensure_youtube_reachable(self, url: str) -> None:
+        if not self._is_youtube(url):
+            return
+        if config.PUBLIC_WEB:
+            raise Exception(YOUTUBE_DISABLED_HINT)
+        # urllib cannot speak SOCKS; when a proxy is set, let yt-dlp try it.
+        if config.YOUTUBE_PROXY:
+            return
+        req = urllib.request.Request(
+            "https://www.youtube.com/",
+            headers=self._headers_for("https://www.youtube.com/"),
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                resp.read(32)
+        except Exception:
+            raise Exception(YOUTUBE_UNREACHABLE_HINT)
 
     def _is_youtube(self, url: str) -> bool:
         u = (url or "").lower()
@@ -134,12 +170,266 @@ class VideoProcessor:
             prepared = normalize_xiaohongshu_url(self._follow_redirect(prepared))
         return prepared
 
+    def _cookie_header_for(self, domain_part: str) -> str:
+        path = Path(self.COOKIE_FILE)
+        if not path.exists():
+            return ""
+        try:
+            pairs = []
+            for line in path.read_text(errors="replace").splitlines():
+                raw = line.strip()
+                if not raw:
+                    continue
+                if raw.startswith("#HttpOnly_"):
+                    raw = raw[len("#HttpOnly_"):]
+                elif raw.startswith("#"):
+                    continue
+                parts = raw.split("\t")
+                if len(parts) < 7:
+                    continue
+                domain, _flag, _path, _secure, _exp, name, value = parts[:7]
+                if domain_part in (domain or "").lower():
+                    pairs.append(f"{name}={value}")
+            return "; ".join(pairs)
+        except Exception:
+            return ""
+
+    def _xiaohongshu_note_id(self, url: str) -> Optional[str]:
+        m = re.search(r"/(?:explore|discovery/item)/([0-9a-f]+)", url or "", re.I)
+        return m.group(1) if m else None
+
+    def _xiaohongshu_initial_state(self, html: str) -> dict:
+        m = re.search(r"window\.__INITIAL_STATE__\s*=", html or "")
+        if not m:
+            return {}
+        raw = html[m.end():]
+        end = raw.find("</script>")
+        blob = (raw[:end] if end != -1 else raw[:400000]).strip().rstrip(";")
+        if not blob:
+            return {}
+        try:
+            from yt_dlp.utils import js_to_json
+            parsed = json.loads(js_to_json(blob))
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    def _xiaohongshu_note_from_state(self, state: dict, note_id: Optional[str]) -> dict:
+        if not isinstance(state, dict):
+            return {}
+        from yt_dlp.utils.traversal import traverse_obj
+        if note_id:
+            note = traverse_obj(state, ("note", "noteDetailMap", note_id, "note"))
+            if isinstance(note, dict) and note:
+                return note
+        note = traverse_obj(state, ("noteData", "data", "noteData"))
+        if isinstance(note, dict) and note:
+            return note
+        return {}
+
+    def _xiaohongshu_fetch_note(self, url: str) -> dict:
+        prepared = self.prepare_url(url)
+        note_id = self._xiaohongshu_note_id(prepared)
+        headers = self._headers_for(prepared)
+        cookie = self._cookie_header_for("xiaohongshu")
+        if cookie:
+            headers["Cookie"] = cookie
+        req = urllib.request.Request(prepared, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                final = resp.geturl() or prepared
+                html = resp.read().decode("utf-8", "replace")
+        except Exception as e:
+            logger.info("小红书笔记页读取失败: %s", _clean(str(e))[:200])
+            raise Exception(LOGIN_PARSE_HINT)
+        state = self._xiaohongshu_initial_state(html)
+        note = self._xiaohongshu_note_from_state(state, note_id)
+        if note:
+            return note
+        if "/login" in (final or "").lower():
+            raise Exception(LOGIN_PARSE_HINT)
+        raise Exception(LOGIN_PARSE_HINT)
+
+    def _xiaohongshu_media(self, note: dict) -> dict:
+        from yt_dlp.utils.traversal import traverse_obj
+        title = (note.get("title") or "").strip()
+        desc = (note.get("desc") or note.get("description") or "").strip()
+        if not title and desc:
+            title = desc.split("\n", 1)[0].strip()[:80]
+        ntype = str(note.get("type") or "").lower()
+        user = note.get("user") or note.get("userInfo") or {}
+        show = ""
+        if isinstance(user, dict):
+            show = (user.get("nickname") or user.get("nickName") or user.get("name") or "").strip()
+        tags = []
+        for item in note.get("tagList") or note.get("hashTag") or []:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("tag") or item.get("title")
+                if name:
+                    tags.append(str(name))
+            elif item:
+                tags.append(str(item))
+        urls: list = []
+        seen = set()
+
+        def _keep(raw: str):
+            u = (raw or "").strip()
+            if not u:
+                return
+            if u.startswith("//"):
+                u = "https:" + u
+            elif u.startswith("http://"):
+                u = "https://" + u[7:]
+            if u not in seen:
+                seen.add(u)
+                urls.append(u)
+
+        stream = traverse_obj(note, ("video", "media", "stream")) or {}
+        if isinstance(stream, dict):
+            for codec in ("h264", "h265", "av1", "h266"):
+                for item in stream.get(codec) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    _keep(item.get("masterUrl") or item.get("url") or "")
+                    for backup in item.get("backupUrls") or []:
+                        _keep(backup)
+        origin = traverse_obj(note, ("video", "consumer", "originVideoKey", {str}))
+        if origin:
+            _keep(f"https://sns-video-bd.xhscdn.com/{origin.lstrip('/')}")
+        duration = None
+        media_v2 = note.get("video") if isinstance(note.get("video"), dict) else {}
+        inner = media_v2.get("mediaV2")
+        if isinstance(inner, str):
+            try:
+                inner = json.loads(inner)
+            except Exception:
+                inner = {}
+        if not isinstance(inner, dict):
+            inner = {}
+        v2 = inner.get("video") if isinstance(inner.get("video"), dict) else {}
+        if v2.get("duration"):
+            try:
+                duration = float(v2["duration"])
+            except (TypeError, ValueError):
+                duration = None
+        if duration is None:
+            for codec in ("h264", "h265"):
+                items = (stream or {}).get(codec) or []
+                if items and isinstance(items[0], dict) and items[0].get("duration"):
+                    try:
+                        raw_d = float(items[0]["duration"])
+                        duration = raw_d / 1000.0 if raw_d > 1000 else raw_d
+                    except (TypeError, ValueError):
+                        duration = None
+                    break
+        images = note.get("imageList") or note.get("image_list") or []
+        is_image = (not urls) and (ntype in ("normal", "image") or bool(images))
+        return {
+            "title": title,
+            "description": desc,
+            "show": show,
+            "tags": tags[:16],
+            "urls": urls,
+            "duration": duration,
+            "is_image": is_image,
+            "type": ntype,
+        }
+
+    def _xiaohongshu_page_meta(self, media: dict) -> dict:
+        return {
+            "show": media.get("show") or "",
+            "description": media.get("description") or "",
+            "tags": media.get("tags") or [],
+        }
+
+    async def _download_xiaohongshu(
+        self,
+        url: str,
+        output_dir: Path,
+        unique_id: str,
+        prefetched_title: Optional[str] = None,
+    ) -> tuple:
+        note = await asyncio.to_thread(self._xiaohongshu_fetch_note, url)
+        media = self._xiaohongshu_media(note)
+        title = prefetched_title or media.get("title") or "xiaohongshu"
+        if media.get("is_image") and not media.get("urls"):
+            raise Exception(NO_MEDIA_HINT)
+        if not media.get("urls"):
+            raise Exception(LOGIN_PARSE_HINT)
+        dest = output_dir / f"audio_{unique_id}.m4a"
+        last_err = None
+        for video_url in media["urls"][:4]:
+            try:
+                logger.info("小红书直链下载音频: %s", title)
+                converted = await asyncio.to_thread(
+                    audio_utils.download_audio_url_to_m4a,
+                    video_url,
+                    dest,
+                    self._XHS_UA,
+                    "https://www.xiaohongshu.com/",
+                )
+                return converted, title
+            except Exception as e:
+                last_err = e
+                logger.info("小红书直链失败，试下一条: %s", _clean(str(e))[:160])
+        raise Exception(_clean(str(last_err) if last_err else LOGIN_PARSE_HINT))
+
     def _bvid(self, url: str, info: Optional[dict] = None) -> Optional[str]:
         for raw in (url, (info or {}).get("webpage_url"), (info or {}).get("id")):
             m = re.search(r"(BV[0-9A-Za-z]+)", str(raw or ""))
             if m:
                 return m.group(1)
         return None
+
+    def _bilibili_json(self, api_url: str) -> dict:
+        headers = self._headers_for("https://www.bilibili.com/")
+        cookie = self._bilibili_cookie_header()
+        if cookie:
+            headers["Cookie"] = cookie
+        req = urllib.request.Request(api_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+
+    def _bilibili_view(self, bvid: str) -> dict:
+        payload = self._bilibili_json(
+            f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+        )
+        if int(payload.get("code") or 0) != 0:
+            raise Exception(payload.get("message") or "暂时无法解析")
+        data = payload.get("data") or {}
+        if not data:
+            raise Exception("暂时无法解析")
+        return data
+
+    def _bilibili_page_meta(self, view: dict) -> dict:
+        owner = view.get("owner") or {}
+        tags = []
+        for item in view.get("tag") or []:
+            if isinstance(item, dict) and item.get("tag_name"):
+                tags.append(str(item["tag_name"]))
+            elif item:
+                tags.append(str(item))
+        return {
+            "show": (owner.get("name") or "").strip(),
+            "description": (view.get("desc") or "").strip(),
+            "tags": tags[:16],
+        }
+
+    def _bilibili_audio_url(self, bvid: str, cid: int) -> str:
+        payload = self._bilibili_json(
+            f"https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&qn=64&fnval=16&fourk=1"
+        )
+        if int(payload.get("code") or 0) != 0:
+            raise Exception(payload.get("message") or "暂时无法下载音频")
+        data = payload.get("data") or {}
+        audios = list((data.get("dash") or {}).get("audio") or [])
+        audios.sort(key=lambda a: int(a.get("bandwidth") or 0), reverse=True)
+        if audios:
+            return (audios[0].get("baseUrl") or audios[0].get("base_url") or "").strip()
+        durl = data.get("durl") or []
+        if durl:
+            return (durl[0].get("url") or "").strip()
+        raise Exception("暂时无法下载音频")
 
     def _bilibili_cookie_header(self) -> str:
         path = Path(self.COOKIE_FILE)
@@ -312,6 +602,7 @@ class VideoProcessor:
 
     async def fetch_subtitles(self, url: str, output_dir: Path) -> tuple:
         url = await asyncio.to_thread(self.prepare_url, url)
+        await asyncio.to_thread(self._ensure_youtube_reachable, url)
         output_dir.mkdir(exist_ok=True)
         unique_id = str(uuid.uuid4())[:8]
         sub_dir = output_dir / f"subs_{unique_id}"
@@ -320,6 +611,38 @@ class VideoProcessor:
         video_duration = None
         charge = False
         page_meta = {"show": "", "description": ""}
+        if self._is_xiaohongshu(url):
+            try:
+                note = await asyncio.to_thread(self._xiaohongshu_fetch_note, url)
+                media = self._xiaohongshu_media(note)
+                video_title = media.get("title") or video_title
+                video_duration = media.get("duration") or video_duration
+                page_meta = self._xiaohongshu_page_meta(media)
+                logger.info("小红书笔记已解析: %s type=%s urls=%s", video_title, media.get("type"), len(media.get("urls") or []))
+                if media.get("is_image") and not media.get("urls"):
+                    raise Exception(NO_MEDIA_HINT)
+                if not media.get("urls"):
+                    raise Exception(LOGIN_PARSE_HINT)
+                return None, video_title, None, video_duration, False, page_meta
+            except Exception as e:
+                clean_err = _clean(str(e))
+                if clean_err in (NO_MEDIA_HINT, LOGIN_PARSE_HINT):
+                    raise
+                logger.info("小红书笔记解析失败，回退网页: %s", clean_err[:200])
+        if self._is_bilibili(url):
+            bvid = self._bvid(url)
+            if bvid:
+                try:
+                    view = await asyncio.to_thread(self._bilibili_view, bvid)
+                    video_title = view.get("title") or video_title
+                    video_duration = view.get("duration") or video_duration
+                    page_meta = self._bilibili_page_meta(view)
+                    charge = bool(
+                        view.get("is_upower_exclusive") or view.get("is_upower_preview")
+                    )
+                    logger.info("B站接口已解析: %s", video_title)
+                except Exception as e:
+                    logger.info("B站接口解析失败，回退网页: %s", _clean(str(e))[:200])
         try:
             check_opts = self._ydl_opts(url, {
                 "quiet": True, "no_warnings": True, "noplaylist": True,
@@ -341,6 +664,7 @@ class VideoProcessor:
                     or ""
                 ).strip(),
                 "description": (info.get("description") or "").strip(),
+                "tags": [str(t) for t in (info.get("tags") or []) if t][:16],
             }
             charge = await asyncio.to_thread(self._bilibili_is_charge, url, info)
             manual_subs: dict = info.get("subtitles") or {}
@@ -413,7 +737,7 @@ class VideoProcessor:
         except Exception as e:
             clean_err = _clean(str(e))
             if self._is_xiaohongshu(url) and "no video formats" in clean_err.lower():
-                raise Exception(NO_MEDIA_HINT)
+                raise Exception(LOGIN_PARSE_HINT)
             logger.warning(f"字幕获取失败（将回退至音频下载）: {e}")
             return None, video_title, None, video_duration, charge, page_meta
         finally:
@@ -594,6 +918,35 @@ class VideoProcessor:
             lines.append("")
         return "\n".join(lines)
 
+    async def _download_bilibili_api(
+        self,
+        url: str,
+        output_dir: Path,
+        unique_id: str,
+        prefetched_title: Optional[str] = None,
+    ) -> tuple:
+        bvid = self._bvid(url)
+        if not bvid:
+            raise Exception("链接无效，请重新填写")
+        view = await asyncio.to_thread(self._bilibili_view, bvid)
+        title = prefetched_title or view.get("title") or "bilibili"
+        cid = view.get("cid")
+        if not cid:
+            raise Exception("暂时无法下载音频")
+        audio_url = await asyncio.to_thread(self._bilibili_audio_url, bvid, int(cid))
+        if not audio_url:
+            raise Exception("暂时无法下载音频")
+        dest = output_dir / f"audio_{unique_id}.m4a"
+        logger.info("B站接口下载音频: %s", title)
+        converted = await asyncio.to_thread(
+            audio_utils.download_audio_url_to_m4a,
+            audio_url,
+            dest,
+            self._UA,
+            "https://www.bilibili.com/",
+        )
+        return converted, title
+
     async def download_and_convert(
         self,
         url: str,
@@ -603,8 +956,26 @@ class VideoProcessor:
     ) -> tuple:
         try:
             url = await asyncio.to_thread(self.prepare_url, url)
+            await asyncio.to_thread(self._ensure_youtube_reachable, url)
             output_dir.mkdir(exist_ok=True)
             unique_id = str(uuid.uuid4())[:8]
+            if self._is_xiaohongshu(url):
+                try:
+                    return await self._download_xiaohongshu(
+                        url, output_dir, unique_id, prefetched_title
+                    )
+                except Exception as e:
+                    clean_err = _clean(str(e))
+                    if clean_err in (NO_MEDIA_HINT, LOGIN_PARSE_HINT):
+                        raise
+                    logger.warning("小红书直链下载失败，回退 yt-dlp: %s", clean_err[:200])
+            if self._is_bilibili(url):
+                try:
+                    return await self._download_bilibili_api(
+                        url, output_dir, unique_id, prefetched_title
+                    )
+                except Exception as e:
+                    logger.warning("B站接口下载失败，回退 yt-dlp: %s", _clean(str(e))[:200])
             output_template = str(output_dir / f"audio_{unique_id}.%(ext)s")
 
             ydl_opts = self._ydl_opts(url, self.ydl_opts.copy())
@@ -669,7 +1040,7 @@ class VideoProcessor:
             logger.error(f"下载视频失败: {clean_err}")
             low = clean_err.lower()
             if self._is_xiaohongshu(url) and "no video formats" in low:
-                raise Exception(NO_MEDIA_HINT)
+                raise Exception(LOGIN_PARSE_HINT)
             gated = is_charge_gated(clean_err)
             if not gated:
                 gated = await asyncio.to_thread(self._bilibili_is_charge, url)

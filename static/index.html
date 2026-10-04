@@ -4,17 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=apple-pod1">
-  <link rel="stylesheet" href="/static/style.css?v=apple-pod1">
+  <link rel="stylesheet" href="/static/ui.css?v=cloud16">
+  <link rel="stylesheet" href="/static/style.css?v=cloud16">
 </head>
 <body>
+  <canvas id="sky" class="sky" aria-hidden="true"></canvas>
+  <div class="sky-art" aria-hidden="true"></div>
   <div class="stage">
     <div class="desk">
       <form class="card" id="mainCard" novalidate>
         <div class="bar">
           <div class="url-wrap" id="urlWrap">
             <input id="urlInput" class="url-input" type="text" inputmode="url" autocomplete="off"
-              placeholder="粘贴小宇宙/B 站/小红书/YouTube/苹果播客网址链接">
+              placeholder="粘贴小宇宙/B 站/小红书/苹果播客网址链接">
             <button type="button" class="url-clear" id="urlClear" aria-label="清除链接">
               <img src="/static/img/icon-url-clear.svg" alt="" width="20" height="20">
             </button>
@@ -41,20 +43,31 @@
         </button>
       </div>
       <p class="modal-lead">
-        将读取浏览器中已经有的登录 Cookie，用于解析登录后才能查看的视频，这不会暴露您的隐私。
+        <span id="loginLeadText">将读取浏览器中已经有的登录 Cookie，用于解析登录后才能查看的视频，这不会暴露您的隐私。</span>
         <span class="has-tip">
           <button type="button" class="icon-btn icon-btn--sm" id="loginInfoBtn" aria-label="为什么不会暴露隐私">
             <img src="/static/img/icon-info.svg" alt="" width="20" height="20">
           </button>
-          <span class="need-tip" role="tooltip">登录 Cookie 只留在这台电脑上给解析用，不会上传，也读不到账号密码。</span>
+          <span class="need-tip" id="loginNeedTip" role="tooltip">登录 Cookie 只留在这台电脑上给解析用，不会上传，也读不到账号密码。</span>
         </span>
       </p>
-      <div class="login-row">
+      <div id="loginLocalPane">
+        <div class="login-row">
+          <label class="field">
+            <span>选择浏览器</span>
+            <select id="browserSelect"></select>
+          </label>
+          <button type="button" class="btn btn--solid" id="importCookieBtn">点击读取</button>
+        </div>
+      </div>
+      <div id="loginCloudPane" hidden>
+        <p class="modal-lead" id="loginCloudHint">打开网站并登录后，把 SESSDATA 贴到下面即可，不用装扩展。</p>
         <label class="field">
-          <span>选择浏览器</span>
-          <select id="browserSelect"></select>
+          <span>登录 Cookie</span>
+          <textarea id="cookiePaste" class="cookie-paste" rows="3" placeholder="SESSDATA=……"></textarea>
         </label>
-        <button type="button" class="btn btn--solid" id="importCookieBtn">点击读取</button>
+        <button type="button" class="btn btn--solid" id="uploadCookieBtn">读取并继续</button>
+        <input type="file" id="cookieFile" accept=".txt,text/plain" hidden>
       </div>
     </div>
   </div>
@@ -75,11 +88,12 @@
   <div class="overlay" id="transcriptOverlay" hidden>
     <div class="modal modal-sheet" role="dialog" aria-labelledby="sheetTitle">
       <div class="sheet-chrome">
-      <button type="button" class="icon-btn sheet-close" id="sheetClose" aria-label="关闭">
-        <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
+      <button type="button" class="icon-btn sheet-back" id="sheetBack" aria-label="后退">
+        <img src="/static/img/icon-sheet-back.svg" alt="" width="24" height="24">
       </button>
       <div class="sheet-top">
         <div class="sheet-info">
+          <div class="sheet-lead">
           <div class="sheet-head">
             <h2 id="sheetTitle"></h2>
             <a class="icon-btn" id="sheetSource" href="#" target="_blank" rel="noopener" hidden aria-label="打开原链接">
@@ -97,10 +111,10 @@
                 <img src="/static/img/icon-sheet-copy-ai.svg" alt="" width="16" height="16">
                 <span>复制给AI</span>
               </button>
-              <button type="button" class="action action--sheet" id="openAudioBtn" hidden>
+              <a class="action action--sheet" id="downloadAudioBtn" hidden>
                 <img src="/static/img/icon-sheet-audio.svg" alt="" width="16" height="16">
-                <span>打开音频</span>
-              </button>
+                <span>下载音频</span>
+              </a>
               <div class="export">
                 <button type="button" class="action action--sheet" id="exportBtn">
                   <span>导出为</span>
@@ -112,6 +126,25 @@
                   <button type="button" class="menu-item" data-fmt="srt">SRT</button>
                   <button type="button" class="menu-item" data-fmt="json">JSON</button>
                 </div>
+              </div>
+            </div>
+          </div>
+          </div>
+          <div class="sheet-player" id="sheetPlayer" hidden>
+            <audio id="sheetAudio" preload="none"></audio>
+            <div class="audio-bar">
+              <button type="button" class="audio-play" id="sheetPlayBtn" aria-label="播放">
+                <img class="audio-ico audio-ico--play" src="/static/img/icon-audio-play.svg" alt="" width="24" height="24">
+                <img class="audio-ico audio-ico--pause" src="/static/img/icon-audio-pause.svg" alt="" width="24" height="24" hidden>
+              </button>
+              <span class="audio-time" id="sheetTime">0:00 / 0:00</span>
+              <input type="range" class="audio-seek" id="sheetSeek" min="0" max="1000" value="0" step="1" aria-label="进度">
+              <div class="audio-end">
+                <button type="button" class="audio-mute" id="sheetMuteBtn" aria-label="静音">
+                  <img class="audio-ico audio-ico--vol" src="/static/img/icon-audio-vol.svg" alt="" width="20" height="20">
+                  <img class="audio-ico audio-ico--muted" src="/static/img/icon-audio-muted.svg" alt="" width="20" height="20" hidden>
+                </button>
+                <button type="button" class="audio-rate-btn" id="sheetRateBtn" aria-label="切换倍速">×1</button>
               </div>
             </div>
           </div>
@@ -191,27 +224,11 @@
     </div>
   </div>
 
-  <div class="overlay" id="logOverlay" hidden>
-    <div class="modal modal-sm" role="dialog" aria-labelledby="logTitle">
-      <div class="modal-head">
-        <h2 id="logTitle">操作日志</h2>
-        <button type="button" class="icon-btn" id="logClose" aria-label="关闭">
-          <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
-        </button>
-      </div>
-      <p class="modal-lead">日志只留在这台电脑上，不会自动上传，也没有 Cookie 或账号密码。下载后发给我们就行。</p>
-      <button type="button" class="btn btn--solid" id="logDownload">下载日志</button>
-    </div>
-  </div>
-
-  <button type="button" class="log-fab" id="logBtn" aria-label="反馈操作日志">
-    <img src="/static/img/icon-feedback.svg" alt="" width="24" height="24">
-  </button>
-
   <div class="toast" id="toast" hidden role="status"></div>
 
   <script src="/static/config.js?v=apple-pod1"></script>
   <script src="/static/ui.js?v=apple-pod1"></script>
-  <script src="/static/app.js?v=apple-pod1"></script>
+  <script src="/static/galaxy.js?v=cloud16"></script>
+  <script src="/static/app.js?v=cloud16"></script>
 </body>
 </html>

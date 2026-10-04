@@ -32,7 +32,18 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 # Presets so users do not have to remember base URLs.
+#
+# Note on reachability: `groq` and `openai` are unreachable from a server in
+# mainland China without a proxy, which is not something to ship in a public
+# service. `funasr` exists for that case — it runs on the same box (or a
+# neighbour) and speaks the same protocol, so no egress and no per-minute fee.
 PROVIDERS = {
+    "funasr": {
+        "label": "FunASR 本地服务（自建，国内可用，无分钟费）",
+        "base_url": "http://127.0.0.1:8000/v1",
+        "models": ["paraformer-zh", "SenseVoiceSmall"],
+        "docs": "https://www.funasr.com/",
+    },
     "groq": {
         "label": "Groq（速度最快，兼容 OpenAI 协议）",
         "base_url": "https://api.groq.com/openai/v1",

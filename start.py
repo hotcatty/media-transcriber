@@ -12,7 +12,8 @@ import sys
 
 def main():
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-    prod = "--prod" in sys.argv
+    desktop = "--desktop" in sys.argv
+    prod = "--prod" in sys.argv or desktop
     port = int(os.getenv("MT_PORT") or os.getenv("PORT") or "8766")
     host = os.getenv("MT_HOST") or os.getenv("HOST") or "127.0.0.1"
 
@@ -31,7 +32,20 @@ def main():
 
     backend_dir = os.path.join(os.path.dirname(__file__), "backend")
     os.chdir(backend_dir)
-    raise SystemExit(subprocess.call(cmd))
+    if not desktop:
+        raise SystemExit(subprocess.call(cmd))
+
+    proc = subprocess.Popen(cmd)
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from desktop_window import main as open_window
+        raise SystemExit(open_window())
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 if __name__ == "__main__":

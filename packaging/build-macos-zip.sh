@@ -15,17 +15,18 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app" "$APP/Contents/Reso
 rsync -a "$SRC/Contents/Info.plist" "$APP/Contents/"
 rsync -a "$SRC/Contents/MacOS/launcher" "$APP/Contents/MacOS/launcher.bash"
 rsync -a "$SRC/Contents/Resources/waiting.html" "$APP/Contents/Resources/"
+rsync -a "$ROOT/desktop_splash.py" "$APP/Contents/Resources/"
 clang -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 -Os \
   -o "$APP/Contents/MacOS/launcher" "$ROOT/packaging/macos/stub.c"
 chmod +x "$APP/Contents/MacOS/launcher" "$APP/Contents/MacOS/launcher.bash"
 
 APP_RES="$APP/Contents/Resources/app"
 mkdir -p "$APP_RES"
-cp "$ROOT/start.py" "$ROOT/requirements.txt" "$ROOT/LICENSE" "$ROOT/README.md" "$APP_RES/"
+cp "$ROOT/start.py" "$ROOT/desktop_window.py" "$ROOT/desktop_splash.py" "$ROOT/requirements.txt" "$ROOT/LICENSE" "$ROOT/README.md" "$APP_RES/"
 rsync -a --delete --exclude __pycache__ --exclude temp --exclude .venv \
   "$ROOT/backend/" "$APP_RES/backend/"
 rsync -a --delete --exclude __pycache__ \
-  --exclude _dl --exclude .DS_Store \
+  --exclude _dl --exclude .DS_Store --exclude aurora.js \
   "$ROOT/static/" "$APP_RES/static/"
 
 ARCH="$(uname -m)"
@@ -39,8 +40,10 @@ fetch_uv() {
   rm -rf "$unpack"
   mkdir -p "$unpack"
   echo "download $asset -> $name"
-  curl -fL --retry 3 --retry-delay 2 -o "$tgz" \
-    "https://github.com/astral-sh/uv/releases/latest/download/${asset}"
+  if [[ ! -s "$tgz" ]]; then
+    curl -fL --retry 5 --retry-all-errors --retry-delay 2 -o "$tgz" \
+      "https://github.com/astral-sh/uv/releases/latest/download/${asset}"
+  fi
   tar -xzf "$tgz" -C "$unpack"
   local found
   found="$(find "$unpack" -name uv -type f | head -1)"

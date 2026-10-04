@@ -1,7 +1,7 @@
 """
 媒体转录器 — localhost Web API.
 
-粘贴小宇宙 / B 站 / 小红书 / YouTube / 苹果播客分享链接，或上传音视频，输出简体、有标点、
+粘贴小宇宙 / B 站 / 小红书 / 苹果播客分享链接（本地版另含 YouTube），或上传音视频，输出简体、有标点、
 有段落的逐字稿，方便喂给自己的 AI。
 """
 from __future__ import annotations
@@ -38,6 +38,21 @@ logger = logging.getLogger(__name__)
 config.ensure_dirs()
 store = TaskStore()
 jobs = JobManager(store)
+
+
+def _public(task):
+    pos, total = jobs.queue_line(task.id)
+    return public_task(
+        task,
+        queue_ahead=max(0, pos - 1) if pos else 0,
+        queue_position=pos,
+        queue_total=total,
+    )
+
+
+def _is_local_helper(request: Request) -> bool:
+    host = (request.headers.get("host") or "").split(":")[0].lower().strip("[]")
+    return host in {"127.0.0.1", "localhost", "::1"}
 
 
 @asynccontextmanager
@@ -95,12 +110,21 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 async def read_root():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    return FileResponse(
+        str(STATIC_DIR / "index.html"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/ping")
 async def ping():
-    return {"ok": True, "app": "media-transcriber", "preparing": False}
+    return {
+        "ok": True,
+        "app": "media-transcriber",
+        "preparing": False,
+        "public_web": bool(config.PUBLIC_WEB),
+        "youtube": not config.PUBLIC_WEB,
+    }
 
 
 @app.get("/api/health")
@@ -111,9 +135,11 @@ async def health():
         "ok": info.get("ok") and not ffmpeg_hint,
         "ffmpeg": None if not ffmpeg_hint else ffmpeg_hint,
         "port": config.PORT,
+        "public_web": bool(config.PUBLIC_WEB),
+        "youtube": not config.PUBLIC_WEB,
         "engine": info,
         "interrupted": [
-            public_task(t) for t in store.list(limit=20)
+            _public(t) for t in store.list(limit=20)
             if t.status == "interrupted"
         ],
     }
@@ -136,14 +162,18 @@ async def post_settings(request: Request):
 
 
 @app.get("/api/cookie-status")
-async def cookie_status():
+async def cookie_status(request: Request):
+    if not _is_local_helper(request):
+        return {"exists": False, "size": 0}
     exists = config.COOKIE_FILE.exists()
     size = config.COOKIE_FILE.stat().st_size if exists else 0
     return {"exists": exists, "size": size}
 
 
 @app.post("/api/set-cookie")
-async def set_cookie(content: str = Form(...)):
+async def set_cookie(request: Request, content: str = Form(...)):
+    if not _is_local_helper(request):
+        raise HTTPException(400, "网页版读不到你电脑里的登录状态")
     content = content.strip()
     if not content:
         raise HTTPException(400, "Cookie 内容为空")
@@ -154,7 +184,9 @@ async def set_cookie(content: str = Form(...)):
 
 
 @app.delete("/api/set-cookie")
-async def delete_cookie():
+async def delete_cookie(request: Request):
+    if not _is_local_helper(request):
+        raise HTTPException(400, "网页版读不到你电脑里的登录状态")
     if config.COOKIE_FILE.exists():
         config.COOKIE_FILE.unlink()
         jobs.reload_cookies()
@@ -162,12 +194,42 @@ async def delete_cookie():
 
 
 @app.get("/api/browsers")
-async def list_browsers():
+async def list_browsers(request: Request):
+    if not _is_local_helper(request):
+        return {"browsers": []}
     return {"browsers": cookie_import.list_installed_browsers()}
 
 
+@app.post("/api/upload-cookies")
+async def upload_cookies(
+    file: Optional[UploadFile] = File(None),
+    content: str = Form(default=""),
+    site: str = Form(default="bilibili"),
+):
+    raw = (content or "").strip()
+    if file is not None and (file.filename or "").strip():
+        data = await file.read()
+        raw = data.decode("utf-8", "replace")
+    try:
+        result = cookie_import.save_netscape_text(raw, site)
+    except cookie_import.CookieImportError as e:
+        raise HTTPException(400, str(e)) from None
+    except Exception:
+        logger.exception("上传登录状态失败")
+        raise HTTPException(400, "上传失败，请稍后再试") from None
+    jobs.reload_cookies()
+    logger.info("已读取上传的 %s 登录状态", result.get("site"))
+    return {"ok": True, "message": result["message"], "site": result.get("site")}
+
+
 @app.post("/api/import-cookies")
-async def import_cookies(browser: str = Form(...), site: str = Form(default="bilibili")):
+async def import_cookies(
+    request: Request,
+    browser: str = Form(...),
+    site: str = Form(default="bilibili"),
+):
+    if not _is_local_helper(request):
+        raise HTTPException(400, "网页版请上传 cookies.txt")
     try:
         result = await asyncio.to_thread(
             cookie_import.import_from_browser, browser, site
@@ -258,7 +320,7 @@ async def _enqueue_upload(file: UploadFile) -> dict:
 
 @app.get("/api/tasks")
 async def list_tasks(limit: int = 50):
-    return {"tasks": [public_task(t) for t in store.list(limit=limit)]}
+    return {"tasks": [_public(t) for t in store.list(limit=limit)]}
 
 
 @app.get("/api/task-status/{task_id}")
@@ -267,7 +329,7 @@ async def get_task(task_id: str):
     task = store.get(task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
-    return public_task(task)
+    return _public(task)
 
 
 @app.get("/api/task-stream/{task_id}")
@@ -282,7 +344,7 @@ async def task_stream(task_id: str):
         try:
             current = store.get(task_id)
             if current:
-                yield f"data: {json.dumps(public_task(current), ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(_public(current), ensure_ascii=False)}\n\n"
             while True:
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=25.0)
@@ -431,11 +493,17 @@ def _task_audio_path(task_id: str) -> Path:
 
 @app.get("/api/tasks/{task_id}/audio")
 @app.get("/api/download-audio/{task_id}")
-async def download_audio(task_id: str):
+async def download_audio(task_id: str, download: bool = False):
     path = _task_audio_path(task_id)
     suffix = path.suffix.lower() or ".m4a"
     media = "audio/mp4" if suffix in (".m4a", ".mp4") else "application/octet-stream"
-    return FileResponse(path, filename=path.name, media_type=media)
+    if download:
+        return FileResponse(path, filename=path.name, media_type=media)
+    return FileResponse(
+        path,
+        media_type=media,
+        headers={"Content-Disposition": "inline"},
+    )
 
 
 @app.post("/api/tasks/{task_id}/reveal-audio")

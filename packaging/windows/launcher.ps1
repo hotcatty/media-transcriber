@@ -1,5 +1,5 @@
-# 转录小工具 · Windows 本机助手
-# 准备环境并拉起本地服务。不打开 127.0.0.1，准备好后回到原来的网页继续。
+# 转录小工具 · Windows 本机应用
+# 准备环境并打开桌面窗口。
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -28,7 +28,7 @@ function Copy-Diagnostics([string]$Message) {
     $lines = @(
         "转录小工具 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
-        "launcher=windows-20260916a",
+        "launcher=windows-20260917a",
         "os=$([Environment]::OSVersion.VersionString)",
         "root=$Root",
         "error=$Message",
@@ -199,7 +199,51 @@ function Stop-Bootstrap {
     }
 }
 
-function Show-WaitingPage {
+function Stop-Splash {
+    $splashPidFile = Join-Path $Data "splash.pid"
+    if (-not (Test-Path $splashPidFile)) { return }
+    $p = Get-Content $splashPidFile -ErrorAction SilentlyContinue
+    Remove-Item $splashPidFile -Force -ErrorAction SilentlyContinue
+    if ($p) {
+        try { Stop-Process -Id ([int]$p) -Force -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
+function Open-DesktopWindow {
+    $py = Join-Path $Data "venv\Scripts\python.exe"
+    $script = Join-Path $Data "app\desktop_window.py"
+    if (-not (Test-Path $script)) {
+        $script = Join-Path $Root "app\desktop_window.py"
+    }
+    if ((Test-Path $py) -and (Test-Path $script)) {
+        if (-not (Test-HelperReady)) {
+            Start-Bootstrap
+            for ($i = 0; $i -lt 10; $i++) {
+                try {
+                    Invoke-WebRequest -Uri "$Local/api/ping" -UseBasicParsing -TimeoutSec 1 | Out-Null
+                    break
+                } catch {
+                    Start-Sleep -Milliseconds 200
+                }
+            }
+        }
+        Write-Log "open desktop window"
+        $proc = Start-Process -FilePath $py -ArgumentList @($script) -WorkingDirectory (Split-Path $script) -PassThru
+        Set-Content -Path (Join-Path $Data "window.pid") -Value $proc.Id
+        return
+    }
+    $splash = Join-Path $Root "desktop_splash.py"
+    if (-not (Test-Path $splash)) { $splash = Join-Path $Data "app\desktop_splash.py" }
+    if (Test-Path $splash) {
+        $spy = Get-Command python3 -ErrorAction SilentlyContinue
+        if (-not $spy) { $spy = Get-Command python -ErrorAction SilentlyContinue }
+        if ($spy) {
+            Write-Log "open splash"
+            $proc = Start-Process -FilePath $spy.Source -ArgumentList @($splash) -PassThru
+            Set-Content -Path (Join-Path $Data "splash.pid") -Value $proc.Id
+            return
+        }
+    }
     if (-not (Test-HelperReady)) {
         Start-Bootstrap
         for ($i = 0; $i -lt 10; $i++) {
@@ -212,6 +256,14 @@ function Show-WaitingPage {
         }
     }
     try { Start-Process $Local } catch { Write-Log "open waiting page failed" }
+}
+
+function Wait-DesktopWindow {
+    $pidFile = Join-Path $Data "window.pid"
+    if (-not (Test-Path $pidFile)) { return }
+    $p = Get-Content $pidFile -ErrorAction SilentlyContinue
+    if (-not $p) { return }
+    try { Wait-Process -Id ([int]$p) -ErrorAction SilentlyContinue } catch {}
 }
 
 function Sync-AppDir([string]$From, [string]$To) {
@@ -259,7 +311,8 @@ function GitHub-Fetch([string]$Dest, [string]$Url) {
 
 if (Test-HelperReady) {
     Write-Log "already running"
-    try { Start-Process $Local } catch {}
+    Open-DesktopWindow
+    Wait-DesktopWindow
     exit 0
 }
 
@@ -467,7 +520,7 @@ function Wait-Ready {
 }
 
 try {
-    Show-WaitingPage
+    Open-DesktopWindow
     Ensure-Uv
     Refresh-App
     Ensure-Venv
@@ -475,6 +528,9 @@ try {
     Start-Server
     Wait-Ready
     Write-Log "launch ok"
+    Stop-Splash
+    Open-DesktopWindow
+    Wait-DesktopWindow
 } catch {
     Stop-Bootstrap
     Fail "没法安装运行环境。请检查网络后再打开一次。"

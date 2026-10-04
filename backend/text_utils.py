@@ -80,6 +80,11 @@ def is_xiaohongshu_url(url: str) -> bool:
     return "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u
 
 
+def is_youtube_url(url: str) -> bool:
+    u = (url or "").lower()
+    return "youtube.com" in u or "youtu.be" in u
+
+
 def normalize_xiaohongshu_url(url: str) -> str:
     """www + explore path so yt-dlp's XiaoHongShu extractor matches. Keep xsec_token."""
     raw = extract_share_url(url)
@@ -233,7 +238,7 @@ def format_slash_when(iso: str) -> str:
         return ""
 
 
-LOGIN_PARSE_HINT = "该视频需在登录状态下才能解析"
+LOGIN_PARSE_HINT = "暂时解析不到，请带上登录状态再试一次"
 INVALID_LINK_HINT = "链接无效，请重新填写"
 TEMPORARY_PARSE_HINT = "暂时无法解析，请稍后重试"
 DOWNLOAD_FAIL_HINT = "暂时无法下载音频，请稍后重试"
@@ -241,6 +246,8 @@ CHARGE_VIDEO_HINT = "该视频为充电视频，暂时无法下载音频/视频"
 CHARGE_NEED_LOGIN_HINT = "该视频为充电视频，请读取已充电账号的登录状态"
 NO_MEDIA_HINT = "这篇笔记没有可转录的视频"
 APPLE_EPISODE_HINT = "请打开某一集，再粘贴这一集的苹果播客链接"
+YOUTUBE_UNREACHABLE_HINT = "这台服务器连不上 YouTube，暂时没法解析这条链接"
+YOUTUBE_DISABLED_HINT = "线上体验版暂不支持 YouTube，请下载本地版（GitHub Release）"
 
 
 def is_login_required(text: str) -> bool:
@@ -388,8 +395,12 @@ def friendly_error(text: str) -> str:
     low = raw.lower()
     if "请检查链接或登录信息" in raw or "可能需要登录" in raw:
         return TEMPORARY_PARSE_HINT
-    if NO_MEDIA_HINT in raw or "no video formats" in low:
+    if NO_MEDIA_HINT in raw:
         return NO_MEDIA_HINT
+    if YOUTUBE_DISABLED_HINT in raw:
+        return YOUTUBE_DISABLED_HINT
+    if YOUTUBE_UNREACHABLE_HINT in raw:
+        return YOUTUBE_UNREACHABLE_HINT
     if APPLE_EPISODE_HINT in raw:
         return APPLE_EPISODE_HINT
     if is_charge_need_login(raw):
@@ -495,7 +506,8 @@ def clean_page_text(raw: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def format_source_context(*, show: str = "", description: str = "") -> str:
+def format_source_context(*, show: str = "", description: str = "",
+                          tags: Optional[list] = None) -> str:
     """Compact page context persisted on the task for Whisper and copy-for-AI."""
     show = clean_page_text(show)
     desc = clean_page_text(description)
@@ -507,6 +519,10 @@ def format_source_context(*, show: str = "", description: str = "") -> str:
             desc = desc[len(show):].lstrip(" ：:-—|/|")
         if desc:
             parts.append(desc)
+    label_tags = [clean_page_text(str(t)) for t in (tags or []) if t]
+    label_tags = [t for t in label_tags if t and t != show][:16]
+    if label_tags:
+        parts.append("标签：" + "、".join(label_tags))
     text = "\n".join(parts).strip()
     if len(text) > SOURCE_CONTEXT_MAX:
         text = text[:SOURCE_CONTEXT_MAX].rstrip()

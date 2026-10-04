@@ -24,7 +24,7 @@ LOCAL="http://127.0.0.1:${PORT}"
 REPO="hotcatty/media-transcriber"
 ARCH="$(uname -m)"
 LOCK="$DATA/launcher.lock"
-LAUNCHER_VER="20260916a"
+LAUNCHER_VER="20260917a"
 
 mkdir -p "$DATA/bin" "$DATA/app" "$DATA/python" "$LOG_DIR"
 # Keep stdout free so $(...) helpers can return a path. All logs go to the file.
@@ -80,7 +80,8 @@ helper_ready() {
 
 say_ready() {
   log "ready"
-  show_waiting_page
+  stop_splash
+  open_desktop_window
 }
 
 export MT_HOST="127.0.0.1"
@@ -182,6 +183,69 @@ PY
 }
 
 show_waiting_page() {
+  open_desktop_window
+}
+
+stop_splash() {
+  local p
+  [[ -f "$DATA/splash.pid" ]] || return 0
+  p="$(cat "$DATA/splash.pid" 2>/dev/null || true)"
+  rm -f "$DATA/splash.pid"
+  if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
+    kill "$p" 2>/dev/null || true
+    wait "$p" 2>/dev/null || true
+  fi
+}
+
+desktop_window_running() {
+  local p
+  [[ -f "$DATA/window.pid" ]] || return 1
+  p="$(cat "$DATA/window.pid" 2>/dev/null || true)"
+  [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null
+}
+
+open_desktop_window() {
+  if desktop_window_running; then
+    log "desktop window already open"
+    return 0
+  fi
+  local py="$DATA/venv/bin/python"
+  local script="$DATA/app/desktop_window.py"
+  if [[ ! -f "$script" && -f "$RESOURCES/app/desktop_window.py" ]]; then
+    script="$RESOURCES/app/desktop_window.py"
+  fi
+  if [[ -x "$py" && -f "$script" ]]; then
+    if ! helper_ready; then
+      start_bootstrap
+      local i
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        if curl -fsS --max-time 1 "${LOCAL}/api/ping" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 0.2
+      done
+    fi
+    log "open desktop window"
+    "$py" "$script" >>"$LOG" 2>&1 &
+    echo $! >"$DATA/window.pid"
+    return 0
+  fi
+  local splash="$RESOURCES/desktop_splash.py"
+  [[ -f "$splash" ]] || splash="$DATA/app/desktop_splash.py"
+  if [[ -f "$splash" ]]; then
+    local spy=""
+    if command -v python3 >/dev/null 2>&1; then
+      spy="$(command -v python3)"
+    elif [[ -x /usr/bin/python3 ]]; then
+      spy="/usr/bin/python3"
+    fi
+    if [[ -n "$spy" ]]; then
+      log "open splash"
+      "$spy" "$splash" >>"$LOG" 2>&1 &
+      echo $! >"$DATA/splash.pid"
+      return 0
+    fi
+  fi
   if ! helper_ready; then
     start_bootstrap
     local i
@@ -193,6 +257,14 @@ show_waiting_page() {
     done
   fi
   /usr/bin/open "$LOCAL" >/dev/null 2>&1 || true
+}
+
+wait_desktop_window() {
+  local p
+  p="$(cat "$DATA/window.pid" 2>/dev/null || true)"
+  if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
+    wait "$p" 2>/dev/null || true
+  fi
 }
 
 copy_exec() {
@@ -689,11 +761,12 @@ log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=$LAUNCHER_VER resour
 relocate_if_translocated
 if helper_ready; then
   log "already running scheme=$SCHEME_LAUNCH"
-  show_waiting_page
+  open_desktop_window
+  wait_desktop_window
   exit 0
 fi
 acquire_launch_lock
-show_waiting_page
+open_desktop_window
 ensure_uv
 refresh_app
 ensure_venv
@@ -702,4 +775,5 @@ start_server
 wait_ready
 log "launch ok"
 say_ready
+wait_desktop_window
 exit 0

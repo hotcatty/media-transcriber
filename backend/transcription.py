@@ -33,6 +33,7 @@ import config
 import settings_store
 from engines import AudioChunk, Segment, TranscriptionEngine
 from engines.base import whisper_initial_prompt
+from hotwords import apply_hotword_fixes, extract_hotwords
 from text_utils import to_simplified
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,20 @@ def _force_simplified(segments: List[Segment], language: Optional[str]) -> None:
         s.text = to_simplified(s.text)
         for w in s.words:
             w.word = to_simplified(w.word)
+
+
+def _apply_hotwords(
+    segments: List[Segment],
+    title: Optional[str],
+    source_context: Optional[str],
+) -> None:
+    words = extract_hotwords(title=title or "", source_context=source_context or "")
+    if not words:
+        return
+    for s in segments:
+        s.text = apply_hotword_fixes(s.text, words)
+        for w in s.words:
+            w.word = apply_hotword_fixes(w.word, words)
 
 
 def _preview_of(segments: List[Segment], chars: int = 90) -> Optional[str]:
@@ -295,6 +310,7 @@ async def run_transcription(
 
                 shifted = [s.shifted(chunk.start) for s in result.segments]
                 _force_simplified(shifted, detected)
+                _apply_hotwords(shifted, title, source_context)
                 all_segments.extend(shifted)
 
                 if partial_path:

@@ -8,6 +8,7 @@ let loginSite = "bilibili";
 let loginHost = "bilibili.com";
 let loginUrl = "https://www.bilibili.com";
 let autoOpenedId = null;
+let sheetReturnTo = null;
 let jobCollapsed = false;
 
 let etaTimer = null;
@@ -45,37 +46,6 @@ function opNote(event, detail) {
   }
   opLog.push(row);
   if (opLog.length > OP_LOG_MAX) opLog.shift();
-}
-
-function opLogText() {
-  const head = [
-    "转录小工具 操作日志",
-    `导出时间 ${new Date().toISOString()}`,
-    `页面 ${safeUrl(location.href) || location.pathname}`,
-    `检测系统 ${detectedServicePlatform() || "未知"}`,
-    `当前选择 ${currentServicePlatform() || "无"}`,
-    `本机接口 ${window.MT_API ? "已指向本机" : "未指向"}`,
-    `浏览器 ${String(navigator.userAgent || "").slice(0, 240)}`,
-    "",
-  ];
-  const lines = opLog.map((row) => {
-    const { t, event, ...rest } = row;
-    const extra = Object.keys(rest).length ? ` ${JSON.stringify(rest)}` : "";
-    return `${t}  ${event}${extra}`;
-  });
-  return head.concat(lines).join("\n");
-}
-
-function downloadOpLog() {
-  const blob = new Blob([opLogText()], { type: "text/plain;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "转录小工具-操作日志.txt";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  opNote("log.downloaded", { lines: opLog.length });
 }
 
 function isMacDesktop() {
@@ -197,7 +167,7 @@ function paintFirstUse(url) {
     title: url,
     source: url,
     steps: [
-      { id: "model", label: "下载turbo模型", state: "current", need_service: true },
+      { id: "model", label: "下载语音模型", state: "current", need_service: true },
       { id: "parse", label: "解析视频", state: "pending" },
       { id: "download", label: "下载音频", state: "pending" },
       { id: "transcribe", label: "语音识别", state: "pending" },
@@ -372,7 +342,7 @@ function extractShareUrl(s) {
 }
 
 function isUrlFormatError(msg) {
-  return /请粘贴|链接无效|正确格式|还不支持这个链接|unsupported url|no valid video url|打不开这个链接|无效的网址|不是视频|请重新填写/i.test(String(msg || ""));
+  return /请粘贴(正确|有效)?(格式的)?(网址|链接)|链接无效|正确格式的网址|还不支持这个链接|unsupported url|no valid video url|打不开这个链接|无效的网址|不是视频|请重新填写/i.test(String(msg || ""));
 }
 
 function loginRequiredMsg(msg) {
@@ -398,8 +368,9 @@ function humanizeError(raw) {
   return "出了点问题，暂时没法完成这一步";
 }
 
-const LOGIN_PARSE_HINT = "该视频需在登录状态下才能解析";
+const LOGIN_PARSE_HINT = "暂时解析不到，请带上登录状态再试一次";
 const LOGIN_NEED_TIP = "没有登录时拿不到可解析的地址，需要读取本机已有的登录状态。";
+const LOGIN_CLOUD_TIP = "登录 Cookie 只用于这次解析，不会显示在页面上，也读不到账号密码。";
 const CHARGE_NEED_LOGIN_HINT = "该视频为充电视频，请读取已充电账号的登录状态";
 const CHARGE_NEED_TIP = "充电内容只对已充电账号开放，需要读取那个账号的登录状态。";
 
@@ -425,7 +396,8 @@ function showToast(text, onceKey) {
   if (!el) return;
   const incoming = String(text || "").trim();
   if (loginRequiredMsg(incoming)) return;
-  const msg = humanizeError(incoming || "出了点问题，请稍后再试");
+  const alreadyUi = /[\u4e00-\u9fff]/.test(incoming);
+  const msg = alreadyUi ? incoming : humanizeError(incoming || "出了点问题，请稍后再试");
   if (onceKey) {
     if (toastedKeys.has(onceKey)) return;
     toastedKeys.add(onceKey);
@@ -566,6 +538,31 @@ function canCollapse(task) {
   return task && ["queued", "running", "needs_login", "failed", "interrupted"].includes(task.status);
 }
 
+function queueCopy(task) {
+  const pos = Math.max(1, Number(task.queue_position || (Number(task.queue_ahead || 0) + 1) || 1));
+  const total = Math.max(pos, Number(task.queue_total || pos));
+  return `当前服务器繁忙，您正在排队，第${pos}位 / 共${total}位`;
+}
+
+function isLocalHelper() {
+  const h = (location.hostname || "").toLowerCase();
+  return h === "127.0.0.1" || h === "localhost" || h === "::1";
+}
+
+const PUBLIC_PLACEHOLDER = "粘贴小宇宙/B 站/小红书/苹果播客网址链接";
+const LOCAL_PLACEHOLDER = "粘贴小宇宙/B 站/小红书/YouTube/苹果播客网址链接";
+const YOUTUBE_PUBLIC_HINT = "线上体验版暂不支持 YouTube，请下载本地版";
+
+function isYoutubeUrl(url) {
+  const u = String(url || "").toLowerCase();
+  return u.includes("youtube.com") || u.includes("youtu.be");
+}
+
+function paintPlaceholders() {
+  const input = $("urlInput");
+  if (input) input.placeholder = isLocalHelper() ? LOCAL_PLACEHOLDER : PUBLIC_PLACEHOLDER;
+}
+
 function compactStatus(task) {
   const steps = Array.isArray(task.steps) ? task.steps : [];
   if (task.status === "failed") {
@@ -583,6 +580,9 @@ function compactStatus(task) {
     return "解析失败";
   }
   const cur = steps.find((s) => s.state === "current" || s.state === "needs_login");
+  if (task.status === "queued") {
+    return queueCopy(task);
+  }
   if (cur) {
     if (cur.state === "needs_login") return "解析失败";
     if (cur.id === "model") return "正在下载模型";
@@ -668,11 +668,11 @@ function renderJob(task) {
       let extra = "";
       if (s.state === "needs_login") {
         const charged = s.id === "download" || /充电/.test(s.hint || "");
-        const tip = charged ? CHARGE_NEED_TIP : LOGIN_NEED_TIP;
+        const tip = charged ? CHARGE_NEED_TIP : (isLocalHelper() ? LOGIN_NEED_TIP : LOGIN_CLOUD_TIP);
+        const hint = s.hint || (charged ? CHARGE_NEED_LOGIN_HINT : LOGIN_PARSE_HINT);
         extra = `<div class="step-login">
-          <span class="need has-tip">${escapeHtml(s.hint || (charged ? CHARGE_NEED_LOGIN_HINT : LOGIN_PARSE_HINT))}
-            ${UI.infoBtn(`data-inline-info="1"`, "为什么需要登录")}
-            <span class="need-tip" role="tooltip">${escapeHtml(tip)}</span>
+          <span class="need has-tip">${escapeHtml(hint)}
+            ${UI.infoBtn(`data-inline-info="1"`, "为什么需要登录")}<span class="need-tip" role="tooltip">${escapeHtml(tip)}</span>
           </span>
           <button type="button" class="link" data-open-login="1">读取登录状态</button>
         </div>`;
@@ -680,7 +680,9 @@ function renderJob(task) {
         const reason = s.hint || task.error || task.message || "";
         extra = reason ? `<span class="step-hint">${escapeHtml(reason)}</span>` : "";
       } else if (s.action === "view_audio") {
-        extra = `<button type="button" class="link" data-reveal-audio="1">${escapeHtml(s.action_label || "查看音频")}</button>`;
+        extra = `<span class="step-extra">
+          <button type="button" class="link" data-play-audio="1">${escapeHtml(s.action_label || "试听")}</button>
+        </span>`;
       } else if (s.state === "current" && s.id === "model") {
         if (s.need_service) {
           const zip = serviceZipFor(currentServicePlatform());
@@ -695,9 +697,13 @@ function renderJob(task) {
           extra = `<span class="step-extra">${size ? `<span class="step-hint">${escapeHtml(size)}</span>` : ""}<span class="step-hint step-hint--eta">${escapeHtml(hint)}</span></span>`;
         }
       } else if (s.state === "current") {
-        const remain = liveRemain(task);
-        const countdown = remain != null ? formatRemain(remain) : (s.eta || s.hint || "剩余约1s");
-        extra = `<span class="step-extra"><span class="step-hint">${escapeHtml(countdown)}</span></span>`;
+        if (task.status === "queued") {
+          extra = `<span class="step-extra"><span class="step-hint">${escapeHtml(s.hint || queueCopy(task))}</span></span>`;
+        } else {
+          const remain = liveRemain(task);
+          const countdown = remain != null ? formatRemain(remain) : (s.eta || s.hint || "剩余约1s");
+          extra = `<span class="step-extra"><span class="step-hint">${escapeHtml(countdown)}</span></span>`;
+        }
       } else if (s.state === "done" && s.hint) {
         extra = `<span class="step-hint">${escapeHtml(s.hint)}</span>`;
       }
@@ -812,6 +818,10 @@ async function submitUrl(url) {
     showToast("请输入正确格式的网址");
     return;
   }
+  if (!isLocalHelper() && isYoutubeUrl(url)) {
+    showToast(YOUTUBE_PUBLIC_HINT);
+    return;
+  }
   jobCollapsed = false;
   autoOpenedId = null;
   setBusy(true);
@@ -870,7 +880,19 @@ async function submitUrl(url) {
 }
 
 function openOverlay(id) { $(id).hidden = false; }
-function closeOverlay(id) { $(id).hidden = true; }
+function closeOverlay(id) {
+  $(id).hidden = true;
+  if (id === "transcriptOverlay") {
+    const audio = $("sheetAudio");
+    if (audio) audio.pause();
+  }
+}
+
+function backFromSheet() {
+  closeOverlay("transcriptOverlay");
+  if (sheetReturnTo === "historyOverlay") openOverlay("historyOverlay");
+  sheetReturnTo = null;
+}
 
 function showReadFail(msg) {
   const body = $("readFailBody");
@@ -887,10 +909,35 @@ function retryReadLogin() {
   opNote("cookies.retry", {});
 }
 
+function paintLoginMode() {
+  const local = isLocalHelper();
+  if ($("loginLocalPane")) $("loginLocalPane").hidden = !local;
+  if ($("loginCloudPane")) $("loginCloudPane").hidden = local;
+  const label = siteLabel();
+  if ($("loginLeadText")) {
+    $("loginLeadText").textContent = local
+      ? "将读取浏览器中已经有的登录 Cookie，用于解析登录后才能查看的视频，这不会暴露您的隐私。"
+      : `这篇需要登录才能解析。网页读不到你电脑里的登录状态，把 ${label} 的登录 Cookie 贴进来即可。`;
+  }
+  if ($("loginNeedTip")) {
+    $("loginNeedTip").textContent = local
+      ? "登录 Cookie 只留在这台电脑上给解析用，不会上传，也读不到账号密码。"
+      : LOGIN_CLOUD_TIP;
+  }
+  const names = { bilibili: "SESSDATA", youtube: "LOGIN_INFO", xiaohongshu: "web_session" };
+  const key = names[loginSite] || "SESSDATA";
+  if ($("loginCloudHint")) {
+    $("loginCloudHint").textContent = `打开 ${loginHost} 并登录。在页面按 F12，打开 Application → Cookies，复制 ${key} 贴到下面。`;
+  }
+  const paste = $("cookiePaste");
+  if (paste) paste.placeholder = `${key}=……`;
+}
+
 function openLogin() {
   const tip = $("loginInfoBtn") && $("loginInfoBtn").closest(".has-tip");
   if (tip) tip.classList.remove("is-open");
   closeOverlay("readFailOverlay");
+  paintLoginMode();
   openOverlay("loginOverlay");
 }
 
@@ -918,6 +965,57 @@ async function loadBrowsers() {
   }
 }
 
+async function continueAfterCookies() {
+  closeOverlay("loginOverlay");
+  if (!currentTaskId) {
+    showToast("已读取登录状态，请再点一次转录");
+    return;
+  }
+  const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/resume`), { method: "POST" });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    showReadFail(detailText(body, "无法继续解析"));
+    return;
+  }
+  setBusy(true);
+  startSSE(currentTaskId);
+}
+
+async function uploadCookies() {
+  const btn = $("uploadCookieBtn");
+  const input = $("cookieFile");
+  const paste = $("cookiePaste");
+  const file = input && input.files && input.files[0];
+  const text = paste && paste.value.trim();
+  if (!file && !text) {
+    showToast("请先贴上登录 Cookie");
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "正在读取…";
+  opNote("cookies.upload", { site: loginSite, via: file ? "file" : "paste" });
+  try {
+    const fd = new FormData();
+    if (file) fd.append("file", file);
+    if (text) fd.append("content", text);
+    fd.append("site", loginSite);
+    const resp = await fetch(mtApi("/api/upload-cookies"), { method: "POST", body: fd });
+    const data = await resp.json().catch(() => ({}));
+    const msg = detailText(data, "读取失败");
+    if (!resp.ok) {
+      showReadFail(msg);
+      return;
+    }
+    opNote("cookies.ok", { site: loginSite, via: "upload" });
+    await continueAfterCookies();
+  } catch (_) {
+    showReadFail("上传失败，请稍后再试");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "读取并继续";
+  }
+}
+
 async function importCookies() {
   const btn = $("importCookieBtn");
   const browser = $("browserSelect").value;
@@ -936,17 +1034,7 @@ async function importCookies() {
       return;
     }
     opNote("cookies.ok", { browser, site: loginSite });
-    closeOverlay("loginOverlay");
-    if (currentTaskId) {
-      const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/resume`), { method: "POST" });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        showReadFail(detailText(body, "无法继续解析"));
-        return;
-      }
-      setBusy(true);
-      startSSE(currentTaskId);
-    }
+    await continueAfterCookies();
   } catch (_) {
     showReadFail("读取失败，请确认本机服务还在运行");
   } finally {
@@ -955,7 +1043,11 @@ async function importCookies() {
   }
 }
 
-async function openTranscript(task) {
+async function openTranscript(task, opts) {
+  const sheet = $("transcriptOverlay");
+  if (!sheet || sheet.hidden) {
+    sheetReturnTo = opts && opts.from === "history" ? "historyOverlay" : null;
+  }
   currentTaskId = task.id;
   currentTask = task;
   syncLoginSite(task);
@@ -971,7 +1063,34 @@ async function openTranscript(task) {
     src.hidden = true;
   }
   const hasAudio = !!(task.has_audio && String(task.origin || "") !== "subtitle");
-  $("openAudioBtn").hidden = !hasAudio;
+  const audioUrl = taskAudioUrl(task);
+  const dl = $("downloadAudioBtn");
+  if (dl) {
+    dl.hidden = !hasAudio;
+    if (hasAudio) {
+      dl.href = taskAudioDownloadUrl(task);
+      dl.setAttribute("download", `${(task.title || "audio").slice(0, 40)}.m4a`);
+    }
+  }
+  const player = $("sheetPlayer");
+  const audio = $("sheetAudio");
+  if (player && audio) {
+    player.hidden = !hasAudio;
+    if (hasAudio && audioUrl) {
+      if (audio.src !== new URL(audioUrl, window.location.href).href) {
+        audio.pause();
+        audio.muted = false;
+        audio.playbackRate = 1;
+        audio.src = audioUrl;
+        audio.currentTime = 0;
+      }
+      syncSheetPlayer();
+    } else {
+      audio.pause();
+      audio.removeAttribute("src");
+      syncSheetPlayer();
+    }
+  }
   $("sheetBody").textContent = "正在读取…";
   const clip = $("sheetClip");
   if (clip) clip.scrollTop = 0;
@@ -992,6 +1111,31 @@ async function openTranscript(task) {
   }
 }
 
+function writeClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (_) {
+      ok = false;
+    }
+    ta.remove();
+    if (ok) resolve();
+    else reject(new Error("copy"));
+  });
+}
+
 async function copyText() {
   const text = lastText || $("sheetBody").textContent;
   if (!text || !text.trim()) {
@@ -999,7 +1143,7 @@ async function copyText() {
     return;
   }
   try {
-    await navigator.clipboard.writeText(text);
+    await writeClipboard(text);
     showToast("全文已复制");
   } catch (_) {
     showToast("复制失败，请稍后再试");
@@ -1010,7 +1154,13 @@ function buildCopyForAi(task, transcript) {
   const lines = [
     "下面是语音转写稿，请直接基于它整理。不要重新听写，也不要另写一版所谓更优的全文。",
     "",
-    "转写稿来自语音识别，可能有同音错字、漏标点、段落挤在一起。请结合下方【来源】做有限校对：可改明显错字、补标点、按语义分段；不要润色、不要删口头禅、不要概括式改写、不要臆造未出现的说话人。个别词改完仍拿不准，用〔〕标出推测，不要整段加括号。",
+    "转写稿来自语音识别，可能有同音错字、漏标点、段落挤在一起。请做有限校对，并补上标点、按语义分段。",
+    "",
+    "判断错字的方法：把可疑的字放回句子里读。如果存在一个读音相同或相近的字，能让这句话讲得通，而原字讲不通，那就是听错了，改成讲得通的那个。原字本来就讲得通、或者你判断不了，就保留原样不要改。方言、口语、网络用语和梗不算错字。",
+    "",
+    "专有名词（人名、地名、作品名、专业术语）优先采用下方【来源】里出现的写法；来源没给的靠上下文推断，推断不出就保留原样，不要凭空造词。",
+    "",
+    "其余边界：不要润色文风、不要删口头禅、不要概括式改写、不要臆造未出现的说话人。个别词改完仍拿不准，用〔〕标出推测，不要整段加括号。",
     "",
     "请按顺序输出：",
     "1. 总结：约 300 字、3–5 条要点，跳过开场白、广告和闲聊。超过一小时的内容可以写到 500 字，条数不变。",
@@ -1047,7 +1197,7 @@ async function copyForAi() {
   }
   const payload = buildCopyForAi(currentTask, text);
   try {
-    await navigator.clipboard.writeText(payload);
+    await writeClipboard(payload);
     showToast("已复制，请粘贴给 AI");
   } catch (_) {
     showToast("复制失败，请稍后再试");
@@ -1078,29 +1228,141 @@ async function downloadFmt(fmt) {
 }
 
 function hideAudioActions() {
-  const btn = $("openAudioBtn");
-  if (btn) btn.hidden = true;
-  document.querySelectorAll("[data-reveal-audio]").forEach((el) => el.remove());
+  const dl = $("downloadAudioBtn");
+  if (dl) dl.hidden = true;
+  const player = $("sheetPlayer");
+  if (player) player.hidden = true;
+  const audio = $("sheetAudio");
+  if (audio) audio.pause();
+  document.querySelectorAll("[data-play-audio]").forEach((el) => el.remove());
 }
 
-async function revealAudio() {
-  if (!currentTaskId) return;
-  if (currentTask && String(currentTask.origin || "") === "subtitle") {
+function fmtAudioTime(sec) {
+  if (!isFinite(sec) || sec < 0) return "0:00";
+  const s = Math.floor(sec);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const rest = String(s % 60).padStart(2, "0");
+  if (h) return `${h}:${String(m % 60).padStart(2, "0")}:${rest}`;
+  return `${m}:${rest}`;
+}
+
+function rateLabel(rate) {
+  return Number(rate) >= 1.5 ? "×2" : "×1";
+}
+
+function syncSheetMute() {
+  const audio = $("sheetAudio");
+  const muted = !!(audio && (audio.muted || audio.volume === 0));
+  const volIco = document.querySelector("#sheetMuteBtn .audio-ico--vol");
+  const mutedIco = document.querySelector("#sheetMuteBtn .audio-ico--muted");
+  if (volIco) volIco.hidden = muted;
+  if (mutedIco) mutedIco.hidden = !muted;
+  if ($("sheetMuteBtn")) $("sheetMuteBtn").setAttribute("aria-label", muted ? "取消静音" : "静音");
+}
+
+function syncSheetPlayer() {
+  const audio = $("sheetAudio");
+  if (!audio) return;
+  const playing = !audio.paused && !audio.ended;
+  const playIco = document.querySelector("#sheetPlayBtn .audio-ico--play");
+  const pauseIco = document.querySelector("#sheetPlayBtn .audio-ico--pause");
+  if (playIco) playIco.hidden = playing;
+  if (pauseIco) pauseIco.hidden = !playing;
+  const btn = $("sheetPlayBtn");
+  if (btn) btn.setAttribute("aria-label", playing ? "暂停" : "播放");
+  const dur = audio.duration;
+  const now = audio.currentTime || 0;
+  if ($("sheetTime")) $("sheetTime").textContent = `${fmtAudioTime(now)} / ${fmtAudioTime(dur)}`;
+  const seek = $("sheetSeek");
+  if (seek && !seek.matches(":active")) {
+    const p = dur ? Math.round((now / dur) * 1000) : 0;
+    seek.value = String(p);
+    seek.style.setProperty("--p", `${(p / 10).toFixed(2)}%`);
+  }
+  if ($("sheetRateBtn")) $("sheetRateBtn").textContent = rateLabel(audio.playbackRate || 1);
+  syncSheetMute();
+}
+
+function toggleSheetAudio() {
+  const audio = $("sheetAudio");
+  if (!audio) return;
+  if (audio.paused) {
+    audio.play().catch(() => showToast("请再点一次播放"));
+  } else {
+    audio.pause();
+  }
+}
+
+function seekSheetAudio(raw) {
+  const audio = $("sheetAudio");
+  const seek = $("sheetSeek");
+  if (!audio || !audio.duration) return;
+  const p = Number(raw);
+  audio.currentTime = (p / 1000) * audio.duration;
+  if (seek) seek.style.setProperty("--p", `${(p / 10).toFixed(2)}%`);
+  if ($("sheetTime")) $("sheetTime").textContent = `${fmtAudioTime(audio.currentTime)} / ${fmtAudioTime(audio.duration)}`;
+}
+
+function toggleSheetMute() {
+  const audio = $("sheetAudio");
+  if (!audio) return;
+  audio.muted = !audio.muted;
+  syncSheetMute();
+}
+
+function setSheetRate(rate) {
+  const audio = $("sheetAudio");
+  const n = Number(rate) >= 1.5 ? 2 : 1;
+  if (audio) audio.playbackRate = n;
+  if ($("sheetRateBtn")) $("sheetRateBtn").textContent = rateLabel(n);
+}
+
+function toggleSheetRate() {
+  const audio = $("sheetAudio");
+  if (!audio) return;
+  setSheetRate(audio.playbackRate >= 1.5 ? 1 : 2);
+}
+
+function taskAudioUrl(task) {
+  if (!task) return "";
+  if (task.audio_url) return task.audio_url;
+  if (task.id) return mtApi(`/api/tasks/${task.id}/audio`);
+  return "";
+}
+
+function withDownloadFlag(url) {
+  if (!url) return "";
+  return url + (url.includes("?") ? "&" : "?") + "download=1";
+}
+
+function taskAudioDownloadUrl(task) {
+  return withDownloadFlag(taskAudioUrl(task));
+}
+
+function playTaskAudio(task) {
+  const id = (task && task.id) || currentTaskId;
+  if (!id) return;
+  if (task && String(task.origin || "") === "subtitle") {
     hideAudioActions();
     showToast("这个任务用的是现成字幕，没有下载音频");
     return;
   }
-  try {
-    const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/reveal-audio`), { method: "POST" });
-    const data = await r.json().catch(() => ({}));
-    if (r.ok && data.ok !== false) return;
-    const msg = detailText(data, "音频文件已丢失");
-    showToast(msg);
-    if (/已丢失|没有音频|现成字幕/.test(msg)) hideAudioActions();
-  } catch (_) {
-    showToast("音频文件已丢失");
-    hideAudioActions();
+  const url = taskAudioUrl(task || currentTask);
+  if (!url) {
+    showToast("音频还没有准备好");
+    return;
   }
+  const sheet = $("transcriptOverlay");
+  const player = $("sheetPlayer");
+  const audio = $("sheetAudio");
+  if (sheet && !sheet.hidden && player && audio) {
+    player.hidden = false;
+    if (audio.src !== new URL(url, window.location.href).href) audio.src = url;
+    audio.play().catch(() => showToast("请点播放"));
+    return;
+  }
+  openTranscript(task || currentTask);
 }
 
 function histStatus(t) {
@@ -1172,7 +1434,7 @@ async function openHistoryItem(id) {
   if (task.status === "completed") {
     closeOverlay("historyOverlay");
     applyTask(task, { fromHistory: true });
-    openTranscript(task);
+    openTranscript(task, { from: "history" });
   } else {
     closeOverlay("historyOverlay");
     applyTask(task, { fromHistory: true });
@@ -1262,6 +1524,8 @@ document.addEventListener("DOMContentLoaded", () => {
     path: location.pathname,
   });
   loadBrowsers();
+  paintLoginMode();
+  paintPlaceholders();
   syncUrlClear();
 
   $("urlInput").addEventListener("input", () => {
@@ -1318,9 +1582,9 @@ document.addEventListener("DOMContentLoaded", () => {
       await resumeTask(e.target.closest("[data-resume]").getAttribute("data-resume"));
       return;
     }
-    if (e.target.closest("[data-reveal-audio]")) {
+    if (e.target.closest("[data-play-audio]")) {
       e.stopPropagation();
-      revealAudio();
+      playTaskAudio(currentTask);
       return;
     }
     if (e.target.closest("[data-open-login]")) {
@@ -1347,15 +1611,9 @@ document.addEventListener("DOMContentLoaded", () => {
   $("loginClose").onclick = () => closeOverlay("loginOverlay");
   $("readFailClose").onclick = () => closeOverlay("readFailOverlay");
   $("readFailRetry").onclick = retryReadLogin;
-  $("sheetClose").onclick = () => closeOverlay("transcriptOverlay");
+  $("sheetBack").onclick = () => backFromSheet();
   $("serviceClose").onclick = () => closeOverlay("serviceOverlay");
   if ($("labClose")) $("labClose").onclick = () => closeOverlay("labOverlay");
-  $("logBtn").onclick = () => {
-    opNote("log.open", { lines: opLog.length });
-    openOverlay("logOverlay");
-  };
-  $("logClose").onclick = () => closeOverlay("logOverlay");
-  $("logDownload").onclick = downloadOpLog;
   document.querySelectorAll("[data-service-os]").forEach((btn) => {
     btn.onclick = () => {
       const next = btn.getAttribute("data-service-os");
@@ -1374,10 +1632,22 @@ document.addEventListener("DOMContentLoaded", () => {
     if (wrap) wrap.classList.toggle("is-open");
   };
   $("importCookieBtn").onclick = importCookies;
+  if ($("uploadCookieBtn")) $("uploadCookieBtn").onclick = uploadCookies;
 
   $("copyBtn").onclick = copyText;
   $("copyAiBtn").onclick = copyForAi;
-  $("openAudioBtn").onclick = revealAudio;
+  const sheetAudio = $("sheetAudio");
+  if (sheetAudio) {
+    ["timeupdate", "loadedmetadata", "durationchange", "play", "pause", "ended"].forEach((ev) => {
+      sheetAudio.addEventListener(ev, syncSheetPlayer);
+    });
+  }
+  if ($("sheetPlayBtn")) $("sheetPlayBtn").onclick = toggleSheetAudio;
+  if ($("sheetMuteBtn")) $("sheetMuteBtn").onclick = toggleSheetMute;
+  if ($("sheetSeek")) {
+    $("sheetSeek").addEventListener("input", (e) => seekSheetAudio(e.target.value));
+  }
+  if ($("sheetRateBtn")) $("sheetRateBtn").onclick = toggleSheetRate;
   $("exportBtn").onclick = (e) => {
     e.stopPropagation();
     $("exportMenu").hidden = !$("exportMenu").hidden;
@@ -1390,13 +1660,15 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.querySelector(".stage").addEventListener("click", (e) => {
-    if (e.target.closest(".card, #historyBtn, #logBtn")) return;
+    if (e.target.closest(".card, #historyBtn")) return;
     collapseJob();
   });
 
   document.querySelectorAll(".overlay").forEach((ov) => {
     ov.addEventListener("click", (e) => {
-      if (e.target === ov) ov.hidden = true;
+      if (e.target !== ov) return;
+      if (ov.id === "transcriptOverlay") backFromSheet();
+      else ov.hidden = true;
     });
   });
 

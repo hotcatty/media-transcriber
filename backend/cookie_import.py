@@ -188,6 +188,76 @@ def import_from_browser(browser: str, site: str = "bilibili") -> dict:
     raise CookieImportError(_friendly_error(combined, key, label, meta))
 
 
+_PRIMARY_COOKIE = {
+    "bilibili": "SESSDATA",
+    "youtube": "LOGIN_INFO",
+    "xiaohongshu": "web_session",
+}
+
+
+def save_netscape_text(text: str, site: str = "bilibili") -> dict:
+    """Save pasted SESSDATA or a cookies.txt. Never returns cookie values."""
+    raw = (text or "").replace("\r\n", "\n").strip()
+    if len(raw) > 256_000:
+        raise CookieImportError("内容太大")
+    if not _looks_like_netscape(raw):
+        raw = _as_netscape(raw, site)
+        if not raw:
+            raise CookieImportError("请把登录 Cookie 贴进来")
+    meta = site_info(site)
+    tmp = config.COOKIE_FILE.with_name(f".cookies-upload-{os.getpid()}.tmp")
+    try:
+        tmp.write_text(raw + "\n", encoding="utf-8")
+        if not _cookie_file_has_login(tmp, meta):
+            raise CookieImportError(
+                f"文件里没有 {meta['label']} 的登录状态。"
+                f"请先打开 {meta['host']} 并登录，再导出一次"
+            )
+        _commit_cookie_file(tmp)
+    except CookieImportError:
+        _unlink_quiet(tmp)
+        raise
+    except Exception:
+        _unlink_quiet(tmp)
+        raise CookieImportError("上传失败，请稍后再试") from None
+    return {"ok": True, "message": "已读取登录状态", "site": meta["id"]}
+
+
+def _as_netscape(text: str, site: str) -> str:
+    meta = site_info(site)
+    raw = (text or "").strip().strip('"').strip("'")
+    name = _PRIMARY_COOKIE.get(meta["id"], "SESSDATA")
+    value = ""
+    for cand in (name, *sorted(meta["cookie_names"])):
+        m = re.search(rf"(?i)\b{re.escape(cand)}\s*=\s*([^\s;]+)", raw)
+        if m:
+            name, value = cand, m.group(1).strip()
+            break
+    if not value and re.fullmatch(r"[A-Za-z0-9_\-%*.]{8,}", raw):
+        value = raw
+    if not value:
+        return ""
+    domain = "." + meta["host"].lstrip(".")
+    return (
+        "# Netscape HTTP Cookie File\n"
+        f"{domain}\tTRUE\t/\tTRUE\t0\t{name}\t{value}\n"
+    )
+
+
+def _looks_like_netscape(text: str) -> bool:
+    lines = (text or "").splitlines()
+    if any("HTTP Cookie File" in line or line.startswith("# Netscape") for line in lines[:8]):
+        return True
+    for line in lines:
+        raw = line[len("#HttpOnly_"):] if line.startswith("#HttpOnly_") else line
+        if not raw or raw.startswith("#"):
+            continue
+        parts = raw.split("\t")
+        if len(parts) >= 7 and "." in parts[0]:
+            return True
+    return False
+
+
 def _commit_cookie_file(tmp: Path) -> None:
     config.COOKIE_FILE.parent.mkdir(parents=True, exist_ok=True)
     os.replace(tmp, config.COOKIE_FILE)

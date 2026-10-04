@@ -59,6 +59,13 @@ UPLOAD_DIR = TEMP_DIR / "uploads"
 TASKS_INDEX = TEMP_DIR / "tasks.json"
 COOKIE_FILE = Path(os.getenv("MT_COOKIE_FILE", PROJECT_ROOT / "cookies.txt"))
 
+# Optional HTTP/SOCKS proxy used only for YouTube (mainland servers cannot reach it).
+# Examples: socks5://127.0.0.1:7890  http://user:pass@host:8080
+YOUTUBE_PROXY = (os.getenv("MT_YOUTUBE_PROXY") or "").strip()
+
+# Public trial site on a mainland VPS: hide/reject YouTube. Local desktop keeps it.
+PUBLIC_WEB = os.getenv("MT_PUBLIC_WEB", "0") in ("1", "true", "True", "yes")
+
 MODELS_DIR = default_models_dir()
 
 HOST = os.getenv("MT_HOST", "127.0.0.1")

@@ -223,21 +223,19 @@ def whisper_initial_prompt(
     """
     Bias decoding toward known names and the right script.
 
-    Page context (Xiaoyuzhou shownotes, video descriptions) is useful for proper
-    nouns, but a long dump would crowd out the punctuation/simplified-Chinese
-    hint. Language hint is placed last so it survives if the prompt is trimmed.
+    Whisper only keeps ~224 tokens. Proper nouns from the page go first so they
+    survive the trim; the language/punctuation hint is last so it is not cut.
     """
+    from hotwords import extract_hotwords
+
     lang = prompt_for_language(language) or ""
+    words = extract_hotwords(title=title or "", source_context=source_context or "")
     parts: list[str] = []
+    if words:
+        parts.append("专名：" + "、".join(words))
     t = (title or "").strip()
-    ctx = " ".join((source_context or "").split())
-    if t:
+    if t and t not in "".join(parts):
         parts.append(t)
-    if ctx:
-        if t and ctx.startswith(t):
-            ctx = ctx[len(t):].lstrip(" ：:|-")
-        if ctx:
-            parts.append(ctx)
     body = " ".join(parts).strip()
     if not lang and not body:
         return None

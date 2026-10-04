@@ -28,7 +28,7 @@
 <body>
   <div class="card">
     <h1 id="title">正在准备本机组件</h1>
-    <p id="lead">第一次需要自动下载运行环境，大约几分钟。准备好后请回到原来的网页继续转录，不用等这个页面。</p>
+    <p id="lead">第一次需要自动下载运行环境，大约几分钟。</p>
   </div>
   <script>
     async function hop() {
@@ -36,8 +36,7 @@
         const r = await fetch("/api/ping", { cache: "no-store" });
         const j = await r.json();
         if (j && j.ok && j.preparing === false) {
-          document.getElementById("title").textContent = "已经准备好";
-          document.getElementById("lead").textContent = "请回到原来的网页，粘贴链接开始转录。";
+          location.replace("/");
         }
       } catch (e) {}
     }
