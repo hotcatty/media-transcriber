@@ -344,6 +344,8 @@ def _attach_step_progress(task: Task, steps: list) -> list:
 def public_task(task: Task, queue_ahead: int = 0,
                 queue_position: int = 0, queue_total: int = 0) -> dict:
     d = task.to_dict()
+    d.pop("session_id", None)
+    d.pop("audio_path", None)
     d["resumable"] = task.resumable
     d["title"] = display_title(task.title, task.source, task.source_type, task.created_at)
     d["has_audio"] = _has_audio_file(task)
@@ -485,18 +487,22 @@ class JobManager:
         if not buckets:
             self.sse.pop(task_id, None)
 
-    def find_active(self, source: str) -> Optional[Task]:
+    def find_active(self, source: str, session_id: str = "") -> Optional[Task]:
         key = canonical_source(source)
         for t in self.store.active():
+            if session_id and t.session_id != session_id:
+                continue
             if canonical_source(t.source) == key:
                 return t
         return None
 
-    def find_completed(self, source: str) -> Optional[Task]:
+    def find_completed(self, source: str, session_id: str = "") -> Optional[Task]:
         key = canonical_source(source)
         if not key:
             return None
-        for t in self.store.list(limit=200):
+        for t in self.store.list(limit=200, session_id=session_id or None):
+            if session_id and t.session_id != session_id:
+                continue
             if t.status != COMPLETED:
                 continue
             if canonical_source(t.source) != key:
@@ -505,7 +511,7 @@ class JobManager:
                 return t
         return None
 
-    async def submit_url(self, url: str) -> Task:
+    async def submit_url(self, url: str, session_id: str = "") -> Task:
         url = extract_share_url(url)
         if config.PUBLIC_WEB and is_youtube_url(url):
             now = datetime.now()
@@ -519,11 +525,12 @@ class JobManager:
                 message=YOUTUBE_DISABLED_HINT,
                 error=YOUTUBE_DISABLED_HINT,
                 finished_at=_now(),
+                session_id=session_id,
             )
-        existing = self.find_active(url)
+        existing = self.find_active(url, session_id)
         if existing:
             return existing
-        done = self.find_completed(url)
+        done = self.find_completed(url, session_id)
         if done:
             logger.info("复用已有文稿 %s ← %s", done.id[:8], url)
             return done
@@ -537,11 +544,12 @@ class JobManager:
             status=QUEUED,
             stage="queued",
             message="已加入队列…",
+            session_id=session_id,
         )
         await self._enqueue(task.id)
         return task
 
-    async def submit_upload(self, saved_path: Path, original_name: str) -> Task:
+    async def submit_upload(self, saved_path: Path, original_name: str, session_id: str = "") -> Task:
         title = safe_filename(Path(original_name).stem) or original_name
         task = self.store.create(
             source=f"upload:{original_name}",
@@ -551,6 +559,7 @@ class JobManager:
             stage="queued",
             message="已加入队列…",
             audio_path=str(saved_path),
+            session_id=session_id,
         )
         await self._enqueue(task.id)
         return task

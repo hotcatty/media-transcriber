@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -50,9 +51,39 @@ def _public(task):
     )
 
 
+SESSION_COOKIE = "mt_sid"
+
+
 def _is_local_helper(request: Request) -> bool:
     host = (request.headers.get("host") or "").split(":")[0].lower().strip("[]")
     return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _isolate_visitors(request: Request) -> bool:
+    """Public trial is multi-tenant; localhost desktop is one machine."""
+    return bool(config.PUBLIC_WEB) or not _is_local_helper(request)
+
+
+def _valid_session(raw: str) -> bool:
+    s = (raw or "").strip()
+    return 20 <= len(s) <= 64 and all(c.isalnum() or c in "-_" for c in s)
+
+
+def _write_session(request: Request) -> str:
+    if _isolate_visitors(request):
+        return getattr(request.state, "session_id", "") or ""
+    return ""
+
+
+def _owned_task(request: Request, task_id: str):
+    task = store.get(task_id)
+    if task is None:
+        raise HTTPException(404, "任务不存在")
+    if _isolate_visitors(request):
+        sid = getattr(request.state, "session_id", "") or ""
+        if not sid or task.session_id != sid:
+            raise HTTPException(404, "任务不存在")
+    return task
 
 
 @asynccontextmanager
@@ -79,6 +110,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def visitor_session(request: Request, call_next):
+    sid = request.cookies.get(SESSION_COOKIE, "")
+    issued = False
+    if not _valid_session(sid):
+        sid = secrets.token_urlsafe(24)
+        issued = True
+    request.state.session_id = sid
+    response = await call_next(request)
+    if issued:
+        response.set_cookie(
+            SESSION_COOKIE,
+            sid,
+            max_age=60 * 60 * 24 * 180,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+    return response
 
 
 @app.middleware("http")
@@ -128,9 +180,15 @@ async def ping():
 
 
 @app.get("/api/health")
-async def health():
+async def health(request: Request):
     info = engines.describe()
     ffmpeg_hint = audio_utils.check_ffmpeg()
+    interrupted = []
+    if not _isolate_visitors(request):
+        interrupted = [
+            _public(t) for t in store.list(limit=20)
+            if t.status == "interrupted"
+        ]
     return {
         "ok": info.get("ok") and not ffmpeg_hint,
         "ffmpeg": None if not ffmpeg_hint else ffmpeg_hint,
@@ -138,10 +196,7 @@ async def health():
         "public_web": bool(config.PUBLIC_WEB),
         "youtube": not config.PUBLIC_WEB,
         "engine": info,
-        "interrupted": [
-            _public(t) for t in store.list(limit=20)
-            if t.status == "interrupted"
-        ],
+        "interrupted": interrupted,
     }
 
 
@@ -246,6 +301,7 @@ async def import_cookies(
 
 @app.post("/api/transcribe")
 async def transcribe(
+    request: Request,
     url: str = Form(default=""),
     file: Optional[UploadFile] = File(None),
 ):
@@ -253,19 +309,21 @@ async def transcribe(
     if hint:
         raise HTTPException(500, hint)
 
+    sid = _write_session(request)
     if file is not None and (file.filename or "").strip():
-        return await _enqueue_upload(file)
+        return await _enqueue_upload(file, sid)
 
     stripped = (url or "").strip()
     if not stripped:
         raise HTTPException(400, "请粘贴分享链接，或上传音视频文件")
-    task = await jobs.submit_url(stripped)
+    task = await jobs.submit_url(stripped, session_id=sid)
     return {"task_id": task.id, "message": task.message, "status": task.status}
 
 
 # Back-compat aliases for the previous UI.
 @app.post("/api/process-video")
 async def process_video(
+    request: Request,
     url: str = Form(default=""),
     file: Optional[UploadFile] = File(None),
     summary_language: str = Form(default="zh"),
@@ -273,20 +331,20 @@ async def process_video(
     model_base_url: str = Form(default=""),
     model_id: str = Form(default=""),
 ):
-    return await transcribe(url=url, file=file)
+    return await transcribe(request=request, url=url, file=file)
 
 
 @app.post("/api/process-podcast")
-async def process_podcast(url: str = Form(...)):
-    return await transcribe(url=url, file=None)
+async def process_podcast(request: Request, url: str = Form(...)):
+    return await transcribe(request=request, url=url, file=None)
 
 
 @app.post("/api/process-upload")
-async def process_upload(file: UploadFile = File(...)):
-    return await transcribe(url="", file=file)
+async def process_upload(request: Request, file: UploadFile = File(...)):
+    return await transcribe(request=request, url="", file=file)
 
 
-async def _enqueue_upload(file: UploadFile) -> dict:
+async def _enqueue_upload(file: UploadFile, session_id: str = "") -> dict:
     raw_name = file.filename or "upload.bin"
     if ".." in raw_name or "/" in raw_name or "\\" in raw_name:
         raise HTTPException(400, "无效的文件名")
@@ -314,30 +372,29 @@ async def _enqueue_upload(file: UploadFile) -> dict:
         dest.unlink(missing_ok=True)
         raise HTTPException(400, "文件为空")
 
-    task = await jobs.submit_upload(dest, safe_name)
+    task = await jobs.submit_upload(dest, safe_name, session_id=session_id)
     return {"task_id": task.id, "message": task.message}
 
 
 @app.get("/api/tasks")
-async def list_tasks(limit: int = 50):
-    return {"tasks": [_public(t) for t in store.list(limit=limit)]}
+async def list_tasks(request: Request, limit: int = 50):
+    if _isolate_visitors(request):
+        items = store.list(limit=limit, session_id=_write_session(request))
+    else:
+        items = store.list(limit=limit)
+    return {"tasks": [_public(t) for t in items]}
 
 
 @app.get("/api/task-status/{task_id}")
 @app.get("/api/tasks/{task_id}")
-async def get_task(task_id: str):
-    task = store.get(task_id)
-    if task is None:
-        raise HTTPException(404, "任务不存在")
-    return _public(task)
+async def get_task(request: Request, task_id: str):
+    return _public(_owned_task(request, task_id))
 
 
 @app.get("/api/task-stream/{task_id}")
 @app.get("/api/tasks/{task_id}/stream")
-async def task_stream(task_id: str):
-    task = store.get(task_id)
-    if task is None:
-        raise HTTPException(404, "任务不存在")
+async def task_stream(request: Request, task_id: str):
+    _owned_task(request, task_id)
 
     async def event_generator():
         queue = jobs.subscribe(task_id)
@@ -370,7 +427,8 @@ async def task_stream(task_id: str):
 
 
 @app.post("/api/tasks/{task_id}/resume")
-async def resume_task(task_id: str):
+async def resume_task(request: Request, task_id: str):
+    _owned_task(request, task_id)
     try:
         task = await jobs.resume(task_id)
     except ValueError as e:
@@ -379,16 +437,16 @@ async def resume_task(task_id: str):
 
 
 @app.post("/api/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str):
-    if store.get(task_id) is None:
-        raise HTTPException(404, "任务不存在")
+async def cancel_task(request: Request, task_id: str):
+    _owned_task(request, task_id)
     await jobs.cancel(task_id)
     return {"ok": True}
 
 
 @app.delete("/api/task/{task_id}")
 @app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: str, remove_files: bool = True):
+async def delete_task(request: Request, task_id: str, remove_files: bool = True):
+    _owned_task(request, task_id)
     await jobs.cancel(task_id)
     if not store.delete(task_id, remove_files=remove_files):
         raise HTTPException(404, "任务不存在")
@@ -401,7 +459,8 @@ def _file_response(path: Path, fmt: str) -> FileResponse:
 
 
 @app.get("/api/tasks/{task_id}/export/{fmt}")
-async def export_task(task_id: str, fmt: str):
+async def export_task(request: Request, task_id: str, fmt: str):
+    _owned_task(request, task_id)
     if fmt not in formats.FORMATS:
         raise HTTPException(400, f"不支持的格式：{fmt}")
     path = store.read_export(task_id, fmt)
@@ -430,7 +489,9 @@ async def export_task(task_id: str, fmt: str):
 
 
 @app.get("/api/download/{filename}")
-async def legacy_download(filename: str):
+async def legacy_download(request: Request, filename: str):
+    if _isolate_visitors(request):
+        raise HTTPException(404, "文件不存在")
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(400, "文件名无效")
     for task in store.list(limit=500):
@@ -446,8 +507,9 @@ async def legacy_download(filename: str):
 
 
 @app.get("/api/tasks/{task_id}/text")
-async def task_text(task_id: str):
+async def task_text(request: Request, task_id: str):
     """Plain reflowed body — what you paste into a model."""
+    _owned_task(request, task_id)
     path = store.read_export(task_id, "txt")
     if path is None:
         raise HTTPException(404, "还没有逐字稿")
@@ -493,7 +555,8 @@ def _task_audio_path(task_id: str) -> Path:
 
 @app.get("/api/tasks/{task_id}/audio")
 @app.get("/api/download-audio/{task_id}")
-async def download_audio(task_id: str, download: bool = False):
+async def download_audio(request: Request, task_id: str, download: bool = False):
+    _owned_task(request, task_id)
     path = _task_audio_path(task_id)
     suffix = path.suffix.lower() or ".m4a"
     media = "audio/mp4" if suffix in (".m4a", ".mp4") else "application/octet-stream"
@@ -507,7 +570,8 @@ async def download_audio(task_id: str, download: bool = False):
 
 
 @app.post("/api/tasks/{task_id}/reveal-audio")
-async def reveal_audio(task_id: str):
+async def reveal_audio(request: Request, task_id: str):
+    _owned_task(request, task_id)
     path, msg = _audio_file_or_message(task_id)
     if path is None:
         return {"ok": False, "message": msg}

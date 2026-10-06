@@ -73,6 +73,7 @@ class Task:
     detail: Dict = field(default_factory=dict)   # latest Progress payload
     elapsed_seconds: Optional[float] = None
     speed_x: Optional[float] = None
+    session_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -232,9 +233,16 @@ class TaskStore:
                 self.flush(force=True)
             return task
 
-    def list(self, limit: int = 100, include_active: bool = True) -> List[Task]:
+    def list(
+        self,
+        limit: int = 100,
+        include_active: bool = True,
+        session_id: Optional[str] = None,
+    ) -> List[Task]:
         with self._lock:
             items = sorted(self._tasks.values(), key=lambda t: t.created_at, reverse=True)
+        if session_id is not None:
+            items = [t for t in items if t.session_id == session_id]
         if not include_active:
             items = [t for t in items if t.status not in ACTIVE_STATUSES]
         return items[:limit]
