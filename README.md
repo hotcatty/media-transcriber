@@ -24,9 +24,9 @@
 
 大陆机房连不上 YouTube，所以线上版没有海外接口。
 
-## Skill 版（推荐给正在用 Cursor / Claude Code 的人）
+## Skill 版（推荐给正在用ai agent的人）
 
-点下面代码块右上角复制，粘贴给你的 AI agent：
+点下面代码块右上角复制，粘贴给你的ai agent：
 
 ```text
 帮我安装「猫听转文字」本地转录 Skill。
