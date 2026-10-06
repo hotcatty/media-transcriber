@@ -1,4 +1,4 @@
-# 转录小工具 · Windows 本机应用
+# 猫听转文字 · Windows 本机应用
 # 准备环境并打开桌面窗口。
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -21,12 +21,12 @@ function Write-Log([string]$Message) {
 
 function Show-Alert([string]$Message) {
     Add-Type -AssemblyName System.Windows.Forms | Out-Null
-    [System.Windows.Forms.MessageBox]::Show($Message, "转录小工具") | Out-Null
+    [System.Windows.Forms.MessageBox]::Show($Message, "猫听转文字") | Out-Null
 }
 
 function Copy-Diagnostics([string]$Message) {
     $lines = @(
-        "转录小工具 诊断",
+        "猫听转文字 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
         "launcher=windows-20260917a",
         "os=$([Environment]::OSVersion.VersionString)",
@@ -47,7 +47,7 @@ function Copy-Diagnostics([string]$Message) {
     if (-not (Test-Path $downloads)) {
         New-Item -ItemType Directory -Force -Path $downloads | Out-Null
     }
-    $dl = Join-Path $downloads "转录小工具-说明.txt"
+    $dl = Join-Path $downloads "猫听转文字-说明.txt"
     Set-Content -Path $dl -Value $text -Encoding UTF8
     try {
         Set-Clipboard -Value $text
@@ -58,7 +58,7 @@ function Show-DiagWindow([string]$Text) {
     Add-Type -AssemblyName System.Windows.Forms | Out-Null
     Add-Type -AssemblyName System.Drawing | Out-Null
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "转录小工具 · 说明"
+    $form.Text = "猫听转文字 · 说明"
     $form.Width = 720
     $form.Height = 560
     $form.StartPosition = "CenterScreen"
@@ -96,7 +96,7 @@ function Show-DiagWindow([string]$Text) {
         $src = $this.Tag
         $dlg = New-Object System.Windows.Forms.SaveFileDialog
         $dlg.Filter = "Text (*.txt)|*.txt"
-        $dlg.FileName = "转录小工具-说明.txt"
+        $dlg.FileName = "猫听转文字-说明.txt"
         $dlg.InitialDirectory = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
         if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             [IO.File]::WriteAllText($dlg.FileName, $src.Text, [Text.UTF8Encoding]::new($false))

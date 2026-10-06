@@ -1,4 +1,4 @@
-/* 转录小工具 · 太空首页：粘贴链接 → 逐字稿 */
+/* 猫听转文字 · 太空首页：粘贴链接 → 逐字稿 */
 
 let currentTaskId = null;
 let currentTask = null;
@@ -768,7 +768,9 @@ function applyTask(task, opts) {
 function startSSE(taskId) {
   stopSSE();
   currentTaskId = taskId;
-  eventSource = new EventSource(mtApi(`/api/task-stream/${taskId}`));
+  const sid = typeof mtSid === "function" ? mtSid() : "";
+  const q = sid ? `?sid=${encodeURIComponent(sid)}` : "";
+  eventSource = new EventSource(mtApi(`/api/task-stream/${taskId}`) + q);
   eventSource.onmessage = (ev) => {
     try {
       const task = JSON.parse(ev.data);
@@ -779,7 +781,7 @@ function startSSE(taskId) {
   eventSource.onerror = async () => {
     stopSSE();
     try {
-      const r = await fetch(mtApi(`/api/task-status/${taskId}`));
+      const r = await mtFetch(`/api/task-status/${taskId}`);
       if (!r.ok) return;
       const task = await r.json();
       applyTask(task);
@@ -800,11 +802,11 @@ function stopSSE() {
 async function postTranscribe(url) {
   const fd = new FormData();
   fd.append("url", url);
-  const resp = await fetch(mtApi("/api/transcribe"), { method: "POST", body: fd });
+  const resp = await mtFetch("/api/transcribe", { method: "POST", body: fd });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(detailText(data, `HTTP ${resp.status}`));
   if (data.status === "completed" && data.task_id) {
-    const r = await fetch(mtApi(`/api/tasks/${data.task_id}`));
+    const r = await mtFetch(`/api/tasks/${data.task_id}`);
     if (r.ok) applyTask(await r.json());
     return;
   }
@@ -943,7 +945,7 @@ function openLogin() {
 async function loadBrowsers() {
   const sel = $("browserSelect");
   try {
-    const r = await fetch(mtApi("/api/browsers"));
+    const r = await mtFetch("/api/browsers");
     const data = await r.json();
     const list = data.browsers || [];
     const opts = list.length ? list : [
@@ -970,7 +972,7 @@ async function continueAfterCookies() {
     showToast("已读取登录状态，请再点一次转录");
     return;
   }
-  const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/resume`), { method: "POST" });
+  const r = await mtFetch(`/api/tasks/${currentTaskId}/resume`, { method: "POST" });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) {
     showReadFail(detailText(body, "无法继续解析"));
@@ -998,7 +1000,7 @@ async function uploadCookies() {
     if (file) fd.append("file", file);
     if (text) fd.append("content", text);
     fd.append("site", loginSite);
-    const resp = await fetch(mtApi("/api/upload-cookies"), { method: "POST", body: fd });
+    const resp = await mtFetch("/api/upload-cookies", { method: "POST", body: fd });
     const data = await resp.json().catch(() => ({}));
     const msg = detailText(data, "读取失败");
     if (!resp.ok) {
@@ -1025,7 +1027,7 @@ async function importCookies() {
     const fd = new FormData();
     fd.append("browser", browser);
     fd.append("site", loginSite);
-    const resp = await fetch(mtApi("/api/import-cookies"), { method: "POST", body: fd });
+    const resp = await mtFetch("/api/import-cookies", { method: "POST", body: fd });
     const data = await resp.json().catch(() => ({}));
     const msg = detailText(data, "读取失败");
     if (!resp.ok) {
@@ -1095,7 +1097,7 @@ async function openTranscript(task, opts) {
   if (clip) clip.scrollTop = 0;
   openOverlay("transcriptOverlay");
   try {
-    const r = await fetch(mtApi(`/api/tasks/${task.id}/text`));
+    const r = await mtFetch(`/api/tasks/${task.id}/text`);
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       $("sheetBody").textContent = "";
@@ -1206,7 +1208,7 @@ async function copyForAi() {
 async function downloadFmt(fmt) {
   if (!currentTaskId) return;
   try {
-    const r = await fetch(mtApi(`/api/tasks/${currentTaskId}/export/${fmt}`));
+    const r = await mtFetch(`/api/tasks/${currentTaskId}/export/${fmt}`);
     if (!r.ok) {
       const data = await r.json().catch(() => ({}));
       showToast(detailText(data, "还没有可导出的正文"));
@@ -1380,7 +1382,7 @@ function histStatus(t) {
 async function loadHistory() {
   const list = $("historyList");
   try {
-    const r = await fetch(mtApi("/api/tasks"));
+    const r = await mtFetch("/api/tasks");
     const data = await r.json();
     const tasks = data.tasks || [];
     if (!tasks.length) {
@@ -1426,7 +1428,7 @@ function toggleHistMenu(wrap) {
 }
 
 async function openHistoryItem(id) {
-  const r = await fetch(mtApi(`/api/tasks/${id}`));
+  const r = await mtFetch(`/api/tasks/${id}`);
   if (!r.ok) return;
   const task = await r.json();
   jobCollapsed = false;
@@ -1442,7 +1444,7 @@ async function openHistoryItem(id) {
 
 async function resumeTask(id) {
   try {
-    const resp = await fetch(mtApi(`/api/tasks/${id}/resume`), { method: "POST" });
+    const resp = await mtFetch(`/api/tasks/${id}/resume`, { method: "POST" });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || data.ok === false) {
       showToast(detailText(data, "无法继续转录"));
@@ -1566,14 +1568,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.closest("#stopBtn")) {
       const failed = currentTask && currentTask.status === "failed";
       if (!failed && currentTaskId) {
-        await fetch(mtApi(`/api/tasks/${currentTaskId}/cancel`), { method: "POST" });
+        await mtFetch(`/api/tasks/${currentTaskId}/cancel`, { method: "POST" });
       }
       resetToIdle();
       return;
     }
     if (e.target.closest("[data-open]")) {
       const id = e.target.closest("[data-open]").getAttribute("data-open");
-      const r = await fetch(mtApi(`/api/tasks/${id}`));
+      const r = await mtFetch(`/api/tasks/${id}`);
       if (r.ok) openTranscript(await r.json());
       return;
     }
@@ -1703,7 +1705,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (resumeLogin) {
       const id = resumeLogin.getAttribute("data-resume-login");
-      const r = await fetch(mtApi(`/api/tasks/${id}`));
+      const r = await mtFetch(`/api/tasks/${id}`);
       if (r.ok) {
         const task = await r.json();
         jobCollapsed = false;
@@ -1716,7 +1718,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (del) {
       e.stopPropagation();
       const id = del.getAttribute("data-del");
-      await fetch(mtApi(`/api/tasks/${id}`), { method: "DELETE" });
+      await mtFetch(`/api/tasks/${id}`, { method: "DELETE" });
       if (id === currentTaskId) resetToIdle();
       closeHistMenus();
       loadHistory();
@@ -1743,7 +1745,7 @@ document.addEventListener("DOMContentLoaded", () => {
       history.replaceState({}, "", "/");
       $("mainCard").requestSubmit();
     } else {
-      fetch(mtApi("/api/tasks")).then((r) => r.json()).then((data) => {
+      mtFetch("/api/tasks").then((r) => r.json()).then((data) => {
         const running = (data.tasks || []).find((t) =>
           t.status === "running" || t.status === "queued" || t.status === "needs_login"
         );

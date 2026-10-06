@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>转录小工具</title>
+  <title>猫听转文字</title>
   <style>
     html, body { height: 100%; margin: 0; }
     body {
@@ -35,8 +35,8 @@
       try {
         const r = await fetch("/api/ping", { cache: "no-store" });
         const j = await r.json();
-        if (j && j.ok && j.preparing === false) {
-          location.replace("/");
+        if (j && j.ok && j.preparing !== true) {
+          location.replace("/?desktop=1");
         }
       } catch (e) {}
     }

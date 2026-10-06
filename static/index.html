@@ -3,9 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>转录小工具</title>
-  <link rel="stylesheet" href="/static/ui.css?v=cloud16">
-  <link rel="stylesheet" href="/static/style.css?v=cloud16">
+  <title>猫听转文字</title>
+  <script>
+    (function () {
+      try {
+        if (new URLSearchParams(location.search).get("desktop") === "1" || window.pywebview) {
+          document.documentElement.classList.add("mt-desktop");
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/ui.css?v=cloud22">
+  <link rel="stylesheet" href="/static/style.css?v=cloud22">
 </head>
 <body>
   <canvas id="sky" class="sky" aria-hidden="true"></canvas>
@@ -112,7 +121,7 @@
                 <span>复制给AI</span>
               </button>
               <a class="action action--sheet" id="downloadAudioBtn" hidden>
-                <img src="/static/img/icon-sheet-audio.svg" alt="" width="16" height="16">
+                <img src="/static/img/icon-sheet-audio.svg?v=dl1" alt="" width="16" height="16">
                 <span>下载音频</span>
               </a>
               <div class="export">
@@ -189,8 +198,8 @@
           <button type="button" class="service-os-btn" data-service-os="win">Windows</button>
         </div>
         <div class="service-steps" id="serviceGuideMac">
-          <p>1、解压压缩包，双击打开“转录小工具”</p>
-          <p>2、若弹出提示 “无法打开‘转录小工具’”，请点击“完成”关闭弹窗（本工具未公证，属正常情况）</p>
+          <p>1、解压压缩包，双击打开“猫听转文字”</p>
+          <p>2、若弹出提示 “无法打开‘猫听转文字’”，请点击“完成”关闭弹窗（本工具未公证，属正常情况）</p>
           <p>3、打开系统设置 → 隐私与安全性 → 安全性 → 点“仍要打开”</p>
           <p>4、打开后会自动安装，请稍等几分钟。提示准备好后，刷新当前网页即可使用</p>
         </div>
@@ -226,9 +235,9 @@
 
   <div class="toast" id="toast" hidden role="status"></div>
 
-  <script src="/static/config.js?v=apple-pod1"></script>
+  <script src="/static/config.js?v=cloud19"></script>
   <script src="/static/ui.js?v=apple-pod1"></script>
-  <script src="/static/galaxy.js?v=cloud16"></script>
-  <script src="/static/app.js?v=cloud17"></script>
+  <script src="/static/galaxy.js?v=cloud22" defer></script>
+  <script src="/static/app.js?v=cloud19"></script>
 </body>
 </html>

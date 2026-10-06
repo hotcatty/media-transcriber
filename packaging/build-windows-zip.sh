@@ -14,9 +14,11 @@ mkdir -p "$APP/app" "$APP/bin"
 
 cp "$ROOT/packaging/windows/start.bat" "$APP/"
 cp "$ROOT/packaging/windows/launcher.ps1" "$APP/"
+cp "$ROOT/packaging/windows/app.ico" "$APP/"
 cp "$ROOT/packaging/macos/Transcriber.app/Contents/Resources/waiting.html" "$APP/"
 cp "$ROOT/desktop_splash.py" "$APP/"
 cp "$ROOT/start.py" "$ROOT/desktop_window.py" "$ROOT/desktop_splash.py" "$ROOT/requirements.txt" "$ROOT/LICENSE" "$ROOT/README.md" "$APP/app/"
+cp "$ROOT/packaging/icons/app-icon.png" "$APP/app/"
 rsync -a --delete --exclude __pycache__ --exclude temp --exclude .venv \
   "$ROOT/backend/" "$APP/app/backend/"
 rsync -a --delete --exclude __pycache__ \
@@ -71,8 +73,8 @@ UV_BIN="$(command -v uv 2>/dev/null || true)"
 if [[ -z "${UV_BIN}" && -x /Users/hotcat/.local/bin/uv ]]; then
   UV_BIN=/Users/hotcat/.local/bin/uv
 fi
-if [[ -z "${UV_BIN}" && -x "$ROOT/packaging/macos/dist/stage/转录小工具.app/Contents/Resources/bin/uv" ]]; then
-  UV_BIN="$ROOT/packaging/macos/dist/stage/转录小工具.app/Contents/Resources/bin/uv"
+if [[ -z "${UV_BIN}" && -x "$ROOT/packaging/macos/dist/stage/猫听转文字.app/Contents/Resources/bin/uv" ]]; then
+  UV_BIN="$ROOT/packaging/macos/dist/stage/猫听转文字.app/Contents/Resources/bin/uv"
 fi
 if [[ -n "${UV_BIN}" ]]; then
   export UV_PYTHON_INSTALL_DIR="$APP/python"

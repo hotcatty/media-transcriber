@@ -3,7 +3,7 @@ name: media-transcriber
 description: 把视频/音频链接或本地文件转成简体文字稿并做内容分析。适用于小宇宙、B 站、小红书、YouTube、苹果播客，以及「把这个视频转成文字」「这条链接讲了什么」「拆解这期播客」。全本地 Whisper，不上传。Use when the user pastes a media URL, asks to transcribe, summarize, or analyze a video/podcast/audio file.
 ---
 
-# 转录小工具 Skill
+# 猫听转文字 Skill
 
 `$SKILL` = 本仓库根目录（已打开这个项目时），或 clone 到 `~/.claude/skills/media-transcriber/` / `~/.codex/skills/media-transcriber/` 的那份。
 

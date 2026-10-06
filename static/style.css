@@ -58,7 +58,7 @@ body {
   width: calc(1440 * var(--s));
   height: calc(950 * var(--s));
   transform: translate(-50%, -50%);
-  z-index: 0;
+  z-index: 1;
   pointer-events: none;
   background: url("/static/img/space-figures.png?v=cloud13") center / 100% 100% no-repeat;
 }
@@ -68,14 +68,19 @@ body {
 
 .stage {
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  isolation: isolate;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
   min-height: 100%;
+  height: 100%;
   padding: 0 24px;
+  overflow: auto;
 }
 .desk {
   --desk-top: calc((100vh - 950 * var(--s)) / 2 + var(--desk-y) * var(--s));
   position: absolute;
-  top: var(--desk-top);
+  top: min(var(--desk-top), calc(100% - 160px));
   left: 50%;
   transform: translate(-50%, 0);
   width: min(var(--card-w), calc(100% - 48px));
@@ -98,7 +103,10 @@ body {
 */
 .desk.is-centered {
   --desk-y: 400;
-  top: calc((100vh - 950 * var(--s)) / 2 + 400 * var(--s));
+  top: min(
+    calc((100vh - 950 * var(--s)) / 2 + 400 * var(--s)),
+    calc(100% - 160px)
+  );
 }
 @media (prefers-reduced-motion: no-preference) {
   .desk {
@@ -177,6 +185,12 @@ body {
 .url-wrap.is-filled:focus-within .url-clear {
   opacity: 1;
   pointer-events: auto;
+}
+@media (hover: none) {
+  .url-wrap.is-filled .url-clear {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .card:has(.btn--submit.is-busy) .job-action-slot {
@@ -539,6 +553,7 @@ img.step-ico.is-spin {
 .sheet-player {
   flex: none;
   width: 100%;
+  min-width: 0;
   padding: 0;
 }
 .sheet-player[hidden] { display: none !important; }
@@ -549,6 +564,7 @@ img.step-ico.is-spin {
   gap: 16px;
   width: max-content;
   max-width: 100%;
+  min-width: 0;
   padding: 16px 24px;
   border-radius: 60px;
   background: rgba(0, 0, 0, 0.02);
@@ -707,7 +723,7 @@ img.step-ico.is-spin {
   gap: 16px;
   min-width: 0;
 }
-.export { position: relative; }
+.export { position: relative; z-index: 4; }
 .sheet-rule {
   width: 100%;
   height: 1px;
@@ -776,9 +792,11 @@ img.step-ico.is-spin {
     width: 82px;
   }
   .job.is-collapsed .job-action-slot,
-  .card:has(.btn--submit.is-busy) .job.is-collapsed .job-action-slot {
+  .card:has(.btn--submit.is-busy) .job.is-collapsed .job-action-slot,
+  .job-action-slot:has(.action--on-card) {
     flex: 0 0 auto;
     width: auto;
+    max-width: none;
   }
 }
 
@@ -819,9 +837,24 @@ img.step-ico.is-spin {
     width: 82px;
   }
   .job.is-collapsed .job-action-slot,
-  .card:has(.btn--submit.is-busy) .job.is-collapsed .job-action-slot {
+  .card:has(.btn--submit.is-busy) .job.is-collapsed .job-action-slot,
+  .job-action-slot:has(.action--on-card) {
     flex: 0 0 auto;
     width: auto;
+    max-width: none;
   }
+  .audio-bar {
+    width: 100%;
+    max-width: 100%;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .audio-seek {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+  .audio-end { gap: 10px; }
 }
 

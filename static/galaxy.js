@@ -314,6 +314,62 @@ function startGalaxy(canvas) {
   play();
 }
 
+function startStars2d(canvas) {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let w = 0;
+  let h = 0;
+  let stars = [];
+  let frame = 0;
+
+  function resize() {
+    w = window.innerWidth;
+    h = window.innerHeight;
+    canvas.width = Math.max(1, Math.floor(w * dpr));
+    canvas.height = Math.max(1, Math.floor(h * dpr));
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const n = Math.min(420, Math.max(80, Math.floor((w * h) / 4200)));
+    stars = Array.from({ length: n }, () => ({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      r: Math.random() * 1.15 + 0.15,
+      a: Math.random(),
+      tw: 0.5 + Math.random() * 1.4,
+    }));
+  }
+
+  function tick(t) {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < stars.length; i += 1) {
+      const s = stars[i];
+      const tw = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 0.001 * s.tw + s.a * 6.2));
+      ctx.fillStyle = `rgba(255,255,255,${(0.2 + s.a * 0.8) * tw})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    frame = requestAnimationFrame(tick);
+  }
+
+  window.addEventListener("resize", resize);
+  resize();
+  cancelAnimationFrame(frame);
+  frame = requestAnimationFrame(tick);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
-  startGalaxy(document.getElementById("sky"));
+  const canvas = document.getElementById("sky");
+  try {
+    if (window.pywebview || new URLSearchParams(location.search).get("desktop") === "1") {
+      document.documentElement.classList.add("mt-desktop");
+      startStars2d(canvas);
+      return;
+    }
+  } catch (_) {}
+  startGalaxy(canvas);
 });

@@ -170,7 +170,7 @@
   .action:hover { color: #000; }
 }
 .action:active { opacity: 0.55; }
-.action img { display: block; width: 20px; height: 20px; }
+.action img { display: block; width: 20px; height: 20px; flex: none; }
 .action--sheet {
   font-size: 14px;
   color: var(--ink-60);
@@ -295,7 +295,8 @@
 .menu--rate {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  left: auto;
+  right: 0;
 }
 .menu--rate {
   left: auto;

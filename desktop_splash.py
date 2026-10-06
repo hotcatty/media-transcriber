@@ -7,7 +7,7 @@ import tkinter as tk
 def main() -> None:
     family = "PingFang SC" if sys.platform == "darwin" else "Microsoft YaHei"
     root = tk.Tk()
-    root.title("转录小工具")
+    root.title("猫听转文字")
     root.configure(bg="#000000")
     root.minsize(520, 220)
     root.geometry("640x320")

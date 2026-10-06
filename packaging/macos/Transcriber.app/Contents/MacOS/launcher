@@ -1,5 +1,5 @@
 #!/bin/bash
-# 转录小工具 · 本机助手
+# 猫听转文字 · 本机助手
 # 双击后立刻打开准备页（第一次要几分钟）。不要用 osascript：
 # 未公证的 app 会因此弹出「脚本编辑器」，看起来像没打开。
 set -u
@@ -24,7 +24,7 @@ LOCAL="http://127.0.0.1:${PORT}"
 REPO="hotcatty/media-transcriber"
 ARCH="$(uname -m)"
 LOCK="$DATA/launcher.lock"
-LAUNCHER_VER="20260917a"
+LAUNCHER_VER="20261006b"
 
 mkdir -p "$DATA/bin" "$DATA/app" "$DATA/python" "$LOG_DIR"
 # Keep stdout free so $(...) helpers can return a path. All logs go to the file.
@@ -41,7 +41,7 @@ relocate_if_translocated() {
   esac
   local bundle dest
   bundle="$(cd "$CONTENTS/.." && pwd)"
-  dest="${HOME}/Applications/转录小工具.app"
+  dest="${HOME}/Applications/猫听转文字.app"
   mkdir -p "${HOME}/Applications"
   log "relocate $bundle -> $dest"
   rm -rf "$dest"
@@ -204,8 +204,23 @@ desktop_window_running() {
   [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null
 }
 
+close_desktop_window() {
+  local p
+  [[ -f "$DATA/window.pid" ]] || return 0
+  p="$(cat "$DATA/window.pid" 2>/dev/null || true)"
+  rm -f "$DATA/window.pid"
+  if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
+    log "close desktop window pid=$p"
+    kill "$p" 2>/dev/null || true
+    wait "$p" 2>/dev/null || true
+  fi
+}
+
 open_desktop_window() {
-  if desktop_window_running; then
+  local force="${1:-}"
+  if [[ "$force" == "force" ]]; then
+    close_desktop_window
+  elif desktop_window_running; then
     log "desktop window already open"
     return 0
   fi
@@ -285,7 +300,7 @@ runs_here() {
 }
 
 build_diagnostics() {
-  printf '%s\n' "转录小工具 诊断"
+  printf '%s\n' "猫听转文字 诊断"
   printf '%s\n' "time=$(date '+%Y-%m-%d %H:%M:%S')"
   printf '%s\n' "launcher=$LAUNCHER_VER"
   printf '%s\n' "arch=$ARCH"
@@ -314,7 +329,7 @@ write_diag_html() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>转录小工具 · 说明</title>
+<title>猫听转文字 · 说明</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; margin: 24px; color: #111; }
   h1 { font-size: 18px; margin: 0 0 8px; }
@@ -324,9 +339,9 @@ write_diag_html() {
 </style>
 </head>
 <body>
-<h1>转录小工具 · 说明</h1>
+<h1>猫听转文字 · 说明</h1>
 <p>不会上传到网上。跨设备发给我时，请下载成 .txt 文件再发，不要整段粘贴。</p>
-<p>「下载」文件夹里也有一份「转录小工具-说明.txt」。</p>
+<p>「下载」文件夹里也有一份「猫听转文字-说明.txt」。</p>
 <p>
 <button type="button" id="dl">下载说明.txt</button>
 <button type="button" id="btn">复制说明</button>
@@ -339,7 +354,7 @@ EOF
 </textarea>
 <script>
 var t = document.getElementById("log");
-var name = "转录小工具-说明.txt";
+var name = "猫听转文字-说明.txt";
 document.getElementById("dl").onclick = function () {
   var blob = new Blob([t.value], {type: "text/plain;charset=utf-8"});
   var url = URL.createObjectURL(blob);
@@ -378,7 +393,7 @@ fail() {
   stop_bootstrap
   local diag_file="$LOG_DIR/media-transcriber-diag.txt"
   local diag_html="$LOG_DIR/media-transcriber-diag.html"
-  local diag_dl="$HOME/Downloads/转录小工具-说明.txt"
+  local diag_dl="$HOME/Downloads/猫听转文字-说明.txt"
   build_diagnostics "$*" >"$diag_file" 2>/dev/null || true
   mkdir -p "$HOME/Downloads"
   cp "$diag_file" "$diag_dl" 2>/dev/null || true
@@ -740,6 +755,7 @@ start_server() {
     fi
   fi
   log "start server"
+  close_desktop_window
   cd "$DATA/app"
   /usr/bin/nohup "$DATA/venv/bin/python" start.py --prod >>"$LOG" 2>&1 &
   echo $! >"$PIDFILE"
@@ -754,14 +770,15 @@ wait_ready() {
     fi
     sleep 1
   done
-  fail "服务启动超时。关掉再打开一次「转录小工具」试试。"
+  fail "服务启动超时。关掉再打开一次「猫听转文字」试试。"
 }
 
 log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=$LAUNCHER_VER resources=$RESOURCES"
 relocate_if_translocated
 if helper_ready; then
-  log "already running scheme=$SCHEME_LAUNCH"
-  open_desktop_window
+  log "already running scheme=$SCHEME_LAUNCH; refresh bundled files and reopen window"
+  copy_bundled_app || true
+  open_desktop_window force
   wait_desktop_window
   exit 0
 fi

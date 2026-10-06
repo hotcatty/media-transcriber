@@ -1,4 +1,4 @@
-# 转录小工具
+# 猫听转文字
 
 把分享链接转成简体逐字稿。
 
@@ -55,9 +55,10 @@
 **Mac**  
 https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-macOS.zip
 
-1. 解压，打开「转录小工具」
-2. 系统弹出「未打开」时点「完成」，不要点「移到废纸篓」
-3. 打开系统设置 → 隐私与安全性 → 「仍要打开」
+1. 解压，双击打开「猫听转文字」
+2. 系统会弹出「无法打开 / 有安全风险」，并建议「移到废纸篓」。应用没有做苹果公证，属正常情况。请点「完成」，**不要点「移到废纸篓」**
+3. 打开系统设置 → 隐私与安全性 → 「仍要打开」（有的系统要再确认一次）
+4. 再双击打开。第一次会自动准备环境和语音模型，请等几分钟
 
 **Windows**  
 https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-windows.zip
@@ -82,7 +83,7 @@ https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTran
 
 ## 意见反馈
 
-使用中有问题或建议，可以加微信 **edecev2009**，添加时请备注清楚来意（例如「转录小工具反馈」），通过后再说具体问题。
+使用中有问题或建议，可以加微信 **edecev2009**，添加时请备注清楚来意（例如「猫听转文字反馈」），通过后再说具体问题。
 
 ## 自己改代码
 

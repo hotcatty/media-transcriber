@@ -100,6 +100,20 @@ def _valid_session(raw: str) -> bool:
     return 20 <= len(s) <= 64 and all(c.isalnum() or c in "-_" for c in s)
 
 
+def _pick_session(request: Request) -> tuple[str, bool]:
+    """Cookie is easy to drop in WeChat/Safari on HTTP; header/localStorage restore it."""
+    cookie = request.cookies.get(SESSION_COOKIE, "")
+    header = (request.headers.get("x-mt-sid") or "").strip()
+    query = ""
+    path = request.url.path or ""
+    if path.endswith("/stream") or "/task-stream/" in path:
+        query = (request.query_params.get("sid") or "").strip()
+    for cand in (header, query, cookie):
+        if _valid_session(cand):
+            return cand, cand != cookie
+    return secrets.token_urlsafe(24), True
+
+
 def _write_session(request: Request) -> str:
     if _isolate_visitors(request):
         return getattr(request.state, "session_id", "") or ""
@@ -143,19 +157,19 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-MT-SID"],
 )
 
 
 @app.middleware("http")
 async def visitor_session(request: Request, call_next):
-    sid = request.cookies.get(SESSION_COOKIE, "")
-    issued = False
-    if not _valid_session(sid):
-        sid = secrets.token_urlsafe(24)
-        issued = True
+    if not _isolate_visitors(request):
+        request.state.session_id = ""
+        return await call_next(request)
+    sid, refresh_cookie = _pick_session(request)
     request.state.session_id = sid
     response = await call_next(request)
-    if issued:
+    if refresh_cookie:
         response.set_cookie(
             SESSION_COOKIE,
             sid,
@@ -164,6 +178,8 @@ async def visitor_session(request: Request, call_next):
             samesite="lax",
             path="/",
         )
+    response.headers["X-MT-SID"] = sid
+    response.headers["Access-Control-Expose-Headers"] = "X-MT-SID"
     return response
 
 
