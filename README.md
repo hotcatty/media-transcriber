@@ -1,5 +1,6 @@
 # 猫听转文字
-![Uploading icon.png…]()
+
+<img src="packaging/icons/app-icon.png" width="128" height="128" alt="猫听转文字">
 
 把分享链接转成简体逐字稿。
 
