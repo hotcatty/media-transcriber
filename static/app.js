@@ -912,12 +912,11 @@ function retryReadLogin() {
 function paintLoginMode() {
   const local = isLocalHelper();
   if ($("loginLocalPane")) $("loginLocalPane").hidden = !local;
-  if ($("loginCloudPane")) $("loginCloudPane").hidden = local;
-  const label = siteLabel();
+  if ($("loginCloudPane")) $("loginCloudPane").hidden = true;
   if ($("loginLeadText")) {
     $("loginLeadText").textContent = local
       ? "将读取浏览器中已经有的登录 Cookie，用于解析登录后才能查看的视频，这不会暴露您的隐私。"
-      : `这篇需要登录才能解析。网页读不到你电脑里的登录状态，把 ${label} 的登录 Cookie 贴进来即可。`;
+      : "线上体验版只转录公开内容。登录后才能看的视频，请用本地版。";
   }
   if ($("loginNeedTip")) {
     $("loginNeedTip").textContent = local

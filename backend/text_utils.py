@@ -248,6 +248,45 @@ NO_MEDIA_HINT = "这篇笔记没有可转录的视频"
 APPLE_EPISODE_HINT = "请打开某一集，再粘贴这一集的苹果播客链接"
 YOUTUBE_UNREACHABLE_HINT = "这台服务器连不上 YouTube，暂时没法解析这条链接"
 YOUTUBE_DISABLED_HINT = "线上体验版暂不支持 YouTube，请下载本地版（GitHub Release）"
+PUBLIC_HOST_HINT = "线上体验版只支持小宇宙、B 站、小红书、苹果播客的公开链接"
+PUBLIC_COOKIE_HINT = "线上体验版不接受登录 Cookie，请只转录公开内容，或改用本地版"
+PUBLIC_RATE_HINT = "提交太频繁，请稍后再试"
+PUBLIC_BUSY_HINT = "您有任务正在进行，请等完成后再提交"
+
+
+_PUBLIC_HOSTS = (
+    "xiaoyuzhoufm.com",
+    "bilibili.com",
+    "b23.tv",
+    "xiaohongshu.com",
+    "xhslink.com",
+    "xhslink.cn",
+    "podcasts.apple.com",
+    "itunes.apple.com",
+)
+
+
+def host_allowed_on_public(url: str) -> bool:
+    """http(s) links on the trial allowlist only — no IPs, file URLs, or random hosts."""
+    raw = extract_share_url(url)
+    if not raw:
+        return False
+    if not re.match(r"^https?://", raw, re.I):
+        raw = "https://" + raw.lstrip("/")
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return False
+    if (parsed.scheme or "").lower() not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host or host in {"localhost", "127.0.0.1", "::1"}:
+        return False
+    if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", host):
+        return False
+    if ":" in host:
+        return False
+    return any(host == h or host.endswith("." + h) for h in _PUBLIC_HOSTS)
 
 
 def is_login_required(text: str) -> bool:
@@ -399,6 +438,14 @@ def friendly_error(text: str) -> str:
         return NO_MEDIA_HINT
     if YOUTUBE_DISABLED_HINT in raw:
         return YOUTUBE_DISABLED_HINT
+    if PUBLIC_HOST_HINT in raw:
+        return PUBLIC_HOST_HINT
+    if PUBLIC_COOKIE_HINT in raw:
+        return PUBLIC_COOKIE_HINT
+    if PUBLIC_RATE_HINT in raw:
+        return PUBLIC_RATE_HINT
+    if PUBLIC_BUSY_HINT in raw:
+        return PUBLIC_BUSY_HINT
     if YOUTUBE_UNREACHABLE_HINT in raw:
         return YOUTUBE_UNREACHABLE_HINT
     if APPLE_EPISODE_HINT in raw:

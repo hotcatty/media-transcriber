@@ -53,7 +53,9 @@ from text_utils import (
     platform_label,
     safe_filename,
     strip_ansi,
+    host_allowed_on_public,
     YOUTUBE_DISABLED_HINT,
+    PUBLIC_HOST_HINT,
 )
 from transcription import Cancelled, Progress, run_transcription
 from video_processor import VideoProcessor
@@ -524,6 +526,20 @@ class JobManager:
                 stage="parse",
                 message=YOUTUBE_DISABLED_HINT,
                 error=YOUTUBE_DISABLED_HINT,
+                finished_at=_now(),
+                session_id=session_id,
+            )
+        if config.PUBLIC_WEB and not host_allowed_on_public(url):
+            now = datetime.now()
+            fallback = f"{platform_label(url, 'url')} · {now.month}月{now.day}日 {now.hour:02d}:{now.minute:02d}"
+            return self.store.create(
+                source=url,
+                source_type="url",
+                title=fallback,
+                status=FAILED,
+                stage="parse",
+                message=PUBLIC_HOST_HINT,
+                error=PUBLIC_HOST_HINT,
                 finished_at=_now(),
                 session_id=session_id,
             )

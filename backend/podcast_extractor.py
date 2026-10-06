@@ -119,7 +119,7 @@ async def _ytdlp_extract_info(url: str) -> Optional[dict]:
     }
     try:
         import config as _cfg
-        if _cfg.COOKIE_FILE.exists():
+        if _cfg.COOKIE_FILE.exists() and not getattr(_cfg, "PUBLIC_WEB", False):
             opts["cookiefile"] = str(_cfg.COOKIE_FILE)
         if getattr(_cfg, "YOUTUBE_PROXY", "") and (
             "youtube.com" in (url or "").lower() or "youtu.be" in (url or "").lower()

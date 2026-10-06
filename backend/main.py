@@ -12,6 +12,8 @@ import logging
 import secrets
 import subprocess
 import sys
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -29,6 +31,12 @@ import formats
 import settings_store
 from jobs import JobManager, public_task
 from task_store import TaskStore
+from text_utils import (
+    PUBLIC_BUSY_HINT,
+    PUBLIC_COOKIE_HINT,
+    PUBLIC_HOST_HINT,
+    PUBLIC_RATE_HINT,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +60,29 @@ def _public(task):
 
 
 SESSION_COOKIE = "mt_sid"
+_PUBLIC_SUBMIT_LIMIT = 8
+_PUBLIC_SUBMIT_WINDOW = 3600
+_PUBLIC_UPLOAD_MAX_MB = 80
+_public_submits: dict[str, deque] = defaultdict(deque)
+
+
+def _public_rate_ok(session_id: str) -> bool:
+    if not session_id:
+        return True
+    now = time.time()
+    q = _public_submits[session_id]
+    while q and now - q[0] > _PUBLIC_SUBMIT_WINDOW:
+        q.popleft()
+    if len(q) >= _PUBLIC_SUBMIT_LIMIT:
+        return False
+    q.append(now)
+    return True
+
+
+def _session_has_active(session_id: str) -> bool:
+    if not session_id:
+        return False
+    return any(t.session_id == session_id for t in store.active())
 
 
 def _is_local_helper(request: Request) -> bool:
@@ -102,6 +133,9 @@ app = FastAPI(
     title="媒体转录器",
     version="3.0.0",
     lifespan=lifespan,
+    docs_url=None if config.PUBLIC_WEB else "/docs",
+    redoc_url=None if config.PUBLIC_WEB else "/redoc",
+    openapi_url=None if config.PUBLIC_WEB else "/openapi.json",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -195,18 +229,22 @@ async def health(request: Request):
         "port": config.PORT,
         "public_web": bool(config.PUBLIC_WEB),
         "youtube": not config.PUBLIC_WEB,
-        "engine": info,
+        "engine": info if not _isolate_visitors(request) else {"ok": info.get("ok")},
         "interrupted": interrupted,
     }
 
 
 @app.get("/api/settings")
-async def get_settings():
+async def get_settings(request: Request):
+    if _isolate_visitors(request):
+        return {"engine": "local"}
     return settings_store.get_all(redact_secrets=True)
 
 
 @app.post("/api/settings")
 async def post_settings(request: Request):
+    if _isolate_visitors(request):
+        raise HTTPException(404, "任务不存在")
     try:
         body = await request.json()
     except Exception:
@@ -257,10 +295,13 @@ async def list_browsers(request: Request):
 
 @app.post("/api/upload-cookies")
 async def upload_cookies(
+    request: Request,
     file: Optional[UploadFile] = File(None),
     content: str = Form(default=""),
     site: str = Form(default="bilibili"),
 ):
+    if _isolate_visitors(request):
+        raise HTTPException(400, PUBLIC_COOKIE_HINT)
     raw = (content or "").strip()
     if file is not None and (file.filename or "").strip():
         data = await file.read()
@@ -310,12 +351,20 @@ async def transcribe(
         raise HTTPException(500, hint)
 
     sid = _write_session(request)
+    if _isolate_visitors(request):
+        if not _public_rate_ok(sid):
+            raise HTTPException(429, PUBLIC_RATE_HINT)
+        if _session_has_active(sid):
+            raise HTTPException(429, PUBLIC_BUSY_HINT)
+
     if file is not None and (file.filename or "").strip():
-        return await _enqueue_upload(file, sid)
+        return await _enqueue_upload(file, sid, public=_isolate_visitors(request))
 
     stripped = (url or "").strip()
     if not stripped:
         raise HTTPException(400, "请粘贴分享链接，或上传音视频文件")
+    if len(stripped) > 2000:
+        raise HTTPException(400, PUBLIC_HOST_HINT)
     task = await jobs.submit_url(stripped, session_id=sid)
     return {"task_id": task.id, "message": task.message, "status": task.status}
 
@@ -344,7 +393,7 @@ async def process_upload(request: Request, file: UploadFile = File(...)):
     return await transcribe(request=request, url="", file=file)
 
 
-async def _enqueue_upload(file: UploadFile, session_id: str = "") -> dict:
+async def _enqueue_upload(file: UploadFile, session_id: str = "", public: bool = False) -> dict:
     raw_name = file.filename or "upload.bin"
     if ".." in raw_name or "/" in raw_name or "\\" in raw_name:
         raise HTTPException(400, "无效的文件名")
@@ -353,7 +402,8 @@ async def _enqueue_upload(file: UploadFile, session_id: str = "") -> dict:
     if ext not in config.UPLOAD_ALLOWED_EXT:
         raise HTTPException(400, f"不支持的文件类型：{ext or '(无)'}")
 
-    max_bytes = config.UPLOAD_MAX_MB * 1024 * 1024
+    max_mb = _PUBLIC_UPLOAD_MAX_MB if public else config.UPLOAD_MAX_MB
+    max_bytes = max_mb * 1024 * 1024
     import uuid as _uuid
     dest = config.UPLOAD_DIR / f"{_uuid.uuid4().hex[:12]}{ext}"
 
@@ -366,7 +416,7 @@ async def _enqueue_upload(file: UploadFile, session_id: str = "") -> dict:
             total += len(chunk)
             if total > max_bytes:
                 dest.unlink(missing_ok=True)
-                raise HTTPException(413, f"文件超过 {config.UPLOAD_MAX_MB} MB 限制")
+                raise HTTPException(413, f"文件超过 {max_mb} MB 限制")
             out_f.write(chunk)
     if total == 0:
         dest.unlink(missing_ok=True)
@@ -571,6 +621,8 @@ async def download_audio(request: Request, task_id: str, download: bool = False)
 
 @app.post("/api/tasks/{task_id}/reveal-audio")
 async def reveal_audio(request: Request, task_id: str):
+    if _isolate_visitors(request):
+        raise HTTPException(404, "任务不存在")
     _owned_task(request, task_id)
     path, msg = _audio_file_or_message(task_id)
     if path is None:

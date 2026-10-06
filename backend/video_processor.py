@@ -107,7 +107,7 @@ class VideoProcessor:
     def _ydl_opts(self, url: str, extra: dict) -> dict:
         opts = dict(extra)
         opts["http_headers"] = self._headers_for(url)
-        if Path(self.COOKIE_FILE).exists():
+        if Path(self.COOKIE_FILE).exists() and not config.PUBLIC_WEB:
             opts["cookiefile"] = self.COOKIE_FILE
         else:
             opts.pop("cookiefile", None)
@@ -232,7 +232,7 @@ class VideoProcessor:
         note_id = self._xiaohongshu_note_id(prepared)
         headers = self._headers_for(prepared)
         cookie = self._cookie_header_for("xiaohongshu")
-        if cookie:
+        if cookie and not config.PUBLIC_WEB:
             headers["Cookie"] = cookie
         req = urllib.request.Request(prepared, headers=headers)
         try:
