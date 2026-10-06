@@ -1,4 +1,6 @@
-## 猫听转文字 <img src="packaging/icons/app-icon.png" width="128" height="128" alt="猫听转文字"> 
+# 猫听转文字
+
+<img src="packaging/icons/app-icon.png" width="128" height="128" alt="猫听转文字">
 
 把分享链接转成简体逐字稿。
 
@@ -24,19 +26,25 @@
 
 ## Skill 版（推荐给正在用 Cursor / Claude Code 的人）
 
-不用开终端，把这段话发给你的 AI：
+点下面代码块右上角复制，粘贴给你的 AI（新开一个对话也行）。这段话里带了仓库地址，不要求你已经打开这个项目：
 
 ```text
-帮我把这个仓库的转录 skill 装好：
-1. 读 README 里「Skill 版」和 SKILL.md
-2. 跑 bash scripts/run.sh ，缺 Python / ffmpeg / 依赖就按它的提示装
+帮我安装「猫听转文字」本地转录 Skill。
+它在这个 GitHub 仓库：https://github.com/hotcatty/media-transcriber
+请先打开或 git clone 上面这个仓库，不要在当前其它项目里找 README。
+Claude Code 请 clone 到 ~/.claude/skills/media-transcriber
+Codex 请 clone 到 ~/.codex/skills/media-transcriber
+Cursor 已经打开该仓库就直接用；否则先 clone 再打开。
+然后：
+1. 读这个仓库的 SKILL.md（https://github.com/hotcatty/media-transcriber/blob/main/SKILL.md）
+2. 在该仓库根目录跑 bash scripts/run.sh ，缺 Python / ffmpeg / 依赖就按脚本提示装
 3. 模型走 hf-mirror.com（国内默认）
 4. 装完告诉我可以开始贴链接了
 ```
 
 它会逐条问你要不要执行命令，点同意就行。第一次主要在下语音模型，之后就不用管。
 
-装完直接对话：
+装完直接说人话：
 
 ```text
 把这个视频转成文字 https://...
