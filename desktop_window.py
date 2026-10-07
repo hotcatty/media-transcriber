@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Open the local UI in a native window. The backend must already be running."""
+import inspect
 import json
 import os
 import sys
@@ -82,7 +83,8 @@ def main() -> int:
         background_color="#000000",
     )
     icon = _icon_path()
-    if icon:
+    # Older pywebview (common on first Mac install) has no `icon=` argument.
+    if icon and "icon" in inspect.signature(webview.create_window).parameters:
         window_opts["icon"] = icon
     webview.create_window("猫听转文字", base, **window_opts)
     webview.start(private_mode=False)
