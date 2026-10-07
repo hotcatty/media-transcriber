@@ -33,6 +33,17 @@ rsync -a --delete --exclude __pycache__ \
 
 ARCH="$(uname -m)"
 BIN="$APP/Contents/Resources/bin"
+LOCAL_APP="${HOME}/Applications/猫听转文字.app"
+LOCAL_BIN=""
+for cand in \
+  "$LOCAL_APP/Contents/Resources/bin" \
+  "$HOME/Library/Application Support/media-transcriber/bin"
+do
+  if [[ -x "$cand/uv-arm64" && -x "$cand/uv-x86_64" ]]; then
+    LOCAL_BIN="$cand"
+    break
+  fi
+done
 
 fetch_uv() {
   local asset="$1"
@@ -54,8 +65,15 @@ fetch_uv() {
   rm -rf "$tgz" "$unpack"
 }
 
-fetch_uv uv-aarch64-apple-darwin.tar.gz uv-arm64
-fetch_uv uv-x86_64-apple-darwin.tar.gz uv-x86_64
+if [[ -n "$LOCAL_BIN" ]]; then
+  echo "reuse local uv from $LOCAL_BIN"
+  cp "$LOCAL_BIN/uv-arm64" "$BIN/uv-arm64"
+  cp "$LOCAL_BIN/uv-x86_64" "$BIN/uv-x86_64"
+  chmod +x "$BIN/uv-arm64" "$BIN/uv-x86_64"
+else
+  fetch_uv uv-aarch64-apple-darwin.tar.gz uv-arm64
+  fetch_uv uv-x86_64-apple-darwin.tar.gz uv-x86_64
+fi
 if [[ "$ARCH" == "x86_64" ]]; then
   cp "$BIN/uv-x86_64" "$BIN/uv"
 else
@@ -66,14 +84,29 @@ chmod +x "$BIN/uv"
 # Bundle CPython so first launch does not need GitHub to install Python.
 PY_DIR="$APP/Contents/Resources/python"
 mkdir -p "$PY_DIR"
-export UV_PYTHON_INSTALL_DIR="$PY_DIR"
-export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-https://cdn.npmmirror.com/binaries/python-build-standalone}"
-echo "install python 3.12 into bundle (host + both Mac archs if possible)"
-if ! "$APP/Contents/Resources/bin/uv" python install 3.12; then
-  echo "warning: could not bundle host python; runtime will try download" >&2
+LOCAL_PY=""
+for cand in \
+  "$LOCAL_APP/Contents/Resources/python" \
+  "$HOME/Library/Application Support/media-transcriber/python"
+do
+  if [[ -n "$(find "$cand" -name python3.12 -type f 2>/dev/null | head -1)" ]]; then
+    LOCAL_PY="$cand"
+    break
+  fi
+done
+if [[ -n "$LOCAL_PY" ]]; then
+  echo "reuse local python from $LOCAL_PY"
+  rsync -a "$LOCAL_PY/" "$PY_DIR/"
+else
+  export UV_PYTHON_INSTALL_DIR="$PY_DIR"
+  export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-https://cdn.npmmirror.com/binaries/python-build-standalone}"
+  echo "install python 3.12 into bundle (host + both Mac archs if possible)"
+  if ! "$APP/Contents/Resources/bin/uv" python install 3.12; then
+    echo "warning: could not bundle host python; runtime will try download" >&2
+  fi
+  "$APP/Contents/Resources/bin/uv" python install cpython-3.12-macos-aarch64-none || true
+  "$APP/Contents/Resources/bin/uv" python install cpython-3.12-macos-x86_64-none || true
 fi
-"$APP/Contents/Resources/bin/uv" python install cpython-3.12-macos-aarch64-none || true
-"$APP/Contents/Resources/bin/uv" python install cpython-3.12-macos-x86_64-none || true
 if [[ -z "$(find "$PY_DIR" -name python3.12 -type f 2>/dev/null | head -1)" ]]; then
   echo "warning: python bundle empty; runtime will try download" >&2
   rm -rf "$PY_DIR"
