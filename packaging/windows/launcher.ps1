@@ -28,7 +28,7 @@ function Copy-Diagnostics([string]$Message) {
     $lines = @(
         "猫听转文字 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
-        "launcher=windows-20260917a",
+        "launcher=windows-20261007a",
         "os=$([Environment]::OSVersion.VersionString)",
         "root=$Root",
         "error=$Message",
@@ -209,6 +209,16 @@ function Stop-Splash {
     }
 }
 
+function Stop-DesktopWindow {
+    $pidFile = Join-Path $Data "window.pid"
+    if (-not (Test-Path $pidFile)) { return }
+    $p = Get-Content $pidFile -ErrorAction SilentlyContinue
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    if ($p) {
+        try { Stop-Process -Id ([int]$p) -Force -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
 function Open-DesktopWindow {
     $py = Join-Path $Data "venv\Scripts\python.exe"
     $script = Join-Path $Data "app\desktop_window.py"
@@ -309,13 +319,6 @@ function GitHub-Fetch([string]$Dest, [string]$Url) {
     )
 }
 
-if (Test-HelperReady) {
-    Write-Log "already running"
-    Open-DesktopWindow
-    Wait-DesktopWindow
-    exit 0
-}
-
 $env:MT_HOST = "127.0.0.1"
 $env:MT_PORT = "$Port"
 $env:MT_TEMP_DIR = Join-Path $Data "temp"
@@ -399,6 +402,15 @@ function Copy-BundledApp {
         return $true
     }
     return $false
+}
+
+if (Test-HelperReady) {
+    Write-Log "already running; refresh bundled files and reopen window"
+    [void](Copy-BundledApp)
+    Stop-DesktopWindow
+    Open-DesktopWindow
+    Wait-DesktopWindow
+    exit 0
 }
 
 function Refresh-App {
