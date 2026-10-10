@@ -10,7 +10,7 @@
 
 | | 线上体验版 | Skill 版（给 AI 用） | 本地桌面版 |
 |---|---|---|---|
-| 入口 | http://106.55.19.88 | 把下面那段话发给 Cursor / Claude Code / Codex | 本页 [Release](https://github.com/hotcatty/media-transcriber/releases/latest) 安装包 |
+| 入口 | http://maoting.online | 把下面那段话发给 Cursor / Claude Code / Codex | 本页 [Release](https://github.com/hotcatty/media-transcriber/releases/latest) 安装包 |
 | 怎么用 | 打开网页，粘贴链接 | 直接说人话：「把这个视频转成文字」 | 下载安装后，打开同一个界面自己贴 |
 | 平台 | 小宇宙、B 站、小红书、苹果播客 | 小宇宙、B 站、小红书、YouTube、苹果播客 | 同左 |
 | 速度 | 人多会排队 | 本机 Turbo，大约比线上快三四倍 | 同左 |
@@ -20,13 +20,13 @@
 
 ## 线上体验版
 
-打开 http://106.55.19.88 ，把链接贴进去，点转录。
+打开 http://maoting.online ，把链接贴进去，点转录。
 
 大陆机房连不上 YouTube，所以线上版没有海外接口。
 
-## Skill 版（推荐给正在用ai agent的人）
+## Skill 版（推荐给正在用 Cursor / Claude Code 的人）
 
-点下面代码块右上角复制，粘贴给你的ai agent：
+点下面代码块右上角复制，粘贴给你的 AI（新开一个对话也行）。这段话里带了仓库地址，不要求你已经打开这个项目：
 
 ```text
 帮我安装「猫听转文字」本地转录 Skill。
@@ -42,7 +42,9 @@ Cursor 已经打开该仓库就直接用；否则先 clone 再打开。
 4. 装完告诉我可以开始贴链接了
 ```
 
-装完直接对话：
+它会逐条问你要不要执行命令，点同意就行。第一次主要在下语音模型，之后就不用管。
+
+装完直接说人话：
 
 ```text
 把这个视频转成文字 https://...
