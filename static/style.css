@@ -97,6 +97,28 @@ body {
   gap: 24px;
 }
 
+.beian {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  z-index: 3;
+  margin: 0;
+  text-align: center;
+  pointer-events: none;
+}
+.beian a {
+  pointer-events: auto;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .beian a:hover { color: rgba(255, 255, 255, 0.75); }
+}
+html.mt-desktop .beian { display: none; }
+
 /*
   BETA: while a job is open, slide the desk up to Figma 23:717 (Y=400).
   Idle stays at --desk-y: 475. To revert: CENTER_JOB_DESK = false in app.js.
@@ -318,11 +340,10 @@ img.step-ico.is-spin {
   flex-wrap: nowrap;
 }
 .step-login .need {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
+  display: block;
   font-size: 16px;
   color: var(--ink-60);
+  white-space: nowrap;
 }
 .has-tip {
   position: relative;
@@ -428,6 +449,20 @@ img.step-ico.is-spin {
   font-size: 16px;
   font-weight: 600;
 }
+.login-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.login-title .has-tip {
+  align-items: center;
+}
+.login-hint {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--ink-60);
+}
 #sheetTitle {
   font-size: 18px;
   font-weight: 500;
@@ -514,8 +549,19 @@ img.step-ico.is-spin {
   color: var(--ink);
   resize: vertical;
 }
-#loginCloudPane .btn { align-self: flex-start; margin-top: 16px; }
-#loginCloudPane .field { padding: 0 12px; }
+html:not(.mt-local) #loginLocalPane {
+  display: none !important;
+}
+html:not(.mt-local) #loginCloudPane {
+  display: flex !important;
+  flex-direction: column;
+  gap: 16px;
+}
+html.mt-local #loginCloudPane {
+  display: none !important;
+}
+#loginOverlay .modal { gap: 20px; }
+#loginCloudPane .btn { align-self: flex-start; }
 .login-row {
   display: flex;
   align-items: flex-end;

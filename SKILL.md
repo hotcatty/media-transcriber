@@ -1,6 +1,6 @@
 ---
 name: media-transcriber
-description: 把视频/音频链接或本地文件转成简体文字稿并做内容分析。适用于小宇宙、B 站、小红书、YouTube、苹果播客，以及「把这个视频转成文字」「这条链接讲了什么」「拆解这期播客」。全本地 Whisper，不上传。Use when the user pastes a media URL, asks to transcribe, summarize, or analyze a video/podcast/audio file.
+description: 把视频/音频链接或本地文件转成简体文字稿并做内容分析。适用于小宇宙、B 站、小红书、抖音、微信、YouTube、苹果播客，以及「把这个视频转成文字」「这条链接讲了什么」「拆解这期播客」。全本地 Whisper，不上传。Use when the user pastes a media URL, asks to transcribe, summarize, or analyze a video/podcast/audio file.
 ---
 
 # 猫听转文字 Skill
@@ -45,4 +45,4 @@ bash $SKILL/scripts/run.sh "<链接或本地文件>" --out "<目录>"
 
 ## 平台
 
-本地这条链路支持小宇宙、B 站、小红书、YouTube、苹果播客和本地音视频。线上体验站没有 YouTube。
+本地这条链路支持小宇宙、B 站、小红书、抖音、微信、YouTube、苹果播客和本地音视频。线上体验站没有 YouTube。微信视频号若解析不到，Skill 可改用本地文件路径。

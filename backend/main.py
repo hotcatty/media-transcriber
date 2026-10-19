@@ -29,11 +29,11 @@ import cookie_import
 import engines
 import formats
 import settings_store
+import session_cookies
 from jobs import JobManager, public_task
 from task_store import TaskStore
 from text_utils import (
     PUBLIC_BUSY_HINT,
-    PUBLIC_COOKIE_HINT,
     PUBLIC_HOST_HINT,
     PUBLIC_RATE_HINT,
 )
@@ -272,8 +272,9 @@ async def post_settings(request: Request):
 
 @app.get("/api/cookie-status")
 async def cookie_status(request: Request):
-    if not _is_local_helper(request):
-        return {"exists": False, "size": 0}
+    if _isolate_visitors(request):
+        sid = getattr(request.state, "session_id", "") or ""
+        return {"exists": session_cookies.exists(sid), "size": session_cookies.size(sid)}
     exists = config.COOKIE_FILE.exists()
     size = config.COOKIE_FILE.stat().st_size if exists else 0
     return {"exists": exists, "size": size}
@@ -294,8 +295,9 @@ async def set_cookie(request: Request, content: str = Form(...)):
 
 @app.delete("/api/set-cookie")
 async def delete_cookie(request: Request):
-    if not _is_local_helper(request):
-        raise HTTPException(400, "网页版读不到你电脑里的登录状态")
+    if _isolate_visitors(request):
+        session_cookies.clear(getattr(request.state, "session_id", "") or "")
+        return {"ok": True, "message": "Cookie 已清除"}
     if config.COOKIE_FILE.exists():
         config.COOKIE_FILE.unlink()
         jobs.reload_cookies()
@@ -316,12 +318,31 @@ async def upload_cookies(
     content: str = Form(default=""),
     site: str = Form(default="bilibili"),
 ):
-    if _isolate_visitors(request):
-        raise HTTPException(400, PUBLIC_COOKIE_HINT)
     raw = (content or "").strip()
     if file is not None and (file.filename or "").strip():
         data = await file.read()
         raw = data.decode("utf-8", "replace")
+    if _isolate_visitors(request):
+        sid = getattr(request.state, "session_id", "") or ""
+        if not sid:
+            raise HTTPException(400, "会话无效，请刷新页面后再试")
+        try:
+            text = cookie_import.build_netscape_text(raw, site)
+            session_cookies.put(sid, text)
+        except cookie_import.CookieImportError as e:
+            raise HTTPException(400, str(e)) from None
+        except ValueError:
+            raise HTTPException(400, "内容太大") from None
+        except Exception:
+            logger.exception("读取会话登录状态失败")
+            raise HTTPException(400, "上传失败，请稍后再试") from None
+        meta = cookie_import.site_info(site)
+        logger.info("已读取会话登录状态 site=%s", meta.get("id"))
+        return {
+            "ok": True,
+            "message": "已读取登录状态",
+            "site": meta.get("id"),
+        }
     try:
         result = cookie_import.save_netscape_text(raw, site)
     except cookie_import.CookieImportError as e:
@@ -341,7 +362,7 @@ async def import_cookies(
     site: str = Form(default="bilibili"),
 ):
     if not _is_local_helper(request):
-        raise HTTPException(400, "网页版请上传 cookies.txt")
+        raise HTTPException(400, "请把登录状态贴进来")
     try:
         result = await asyncio.to_thread(
             cookie_import.import_from_browser, browser, site

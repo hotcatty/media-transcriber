@@ -80,6 +80,16 @@ def is_xiaohongshu_url(url: str) -> bool:
     return "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u
 
 
+def is_douyin_url(url: str) -> bool:
+    u = (url or "").lower()
+    return "douyin.com" in u or "iesdouyin.com" in u
+
+
+def is_weixin_url(url: str) -> bool:
+    u = (url or "").lower()
+    return "weixin.qq.com" in u or "channels.weixin.qq.com" in u
+
+
 def is_youtube_url(url: str) -> bool:
     u = (url or "").lower()
     return "youtube.com" in u or "youtu.be" in u
@@ -207,6 +217,10 @@ def platform_label(source: str, source_type: str = "url") -> str:
         return "Spotify 播客"
     if "ximalaya.com" in u:
         return "喜马拉雅"
+    if "douyin.com" in u or "iesdouyin.com" in u:
+        return "抖音视频"
+    if "weixin.qq.com" in u or "channels.weixin.qq.com" in u:
+        return "微信视频"
     if source_type == "podcast":
         return "播客"
     return "分享内容"
@@ -238,17 +252,19 @@ def format_slash_when(iso: str) -> str:
         return ""
 
 
-LOGIN_PARSE_HINT = "暂时解析不到，请带上登录状态再试一次"
+LOGIN_PARSE_HINT = "需要登录后再试"
 INVALID_LINK_HINT = "链接无效，请重新填写"
 TEMPORARY_PARSE_HINT = "暂时无法解析，请稍后重试"
 DOWNLOAD_FAIL_HINT = "暂时无法下载音频，请稍后重试"
-CHARGE_VIDEO_HINT = "该视频为充电视频，暂时无法下载音频/视频"
-CHARGE_NEED_LOGIN_HINT = "该视频为充电视频，请读取已充电账号的登录状态"
+CHARGE_VIDEO_HINT = "充电视频，暂时无法下载"
+CHARGE_NEED_LOGIN_HINT = "充电视频，请读取已充电账号"
 NO_MEDIA_HINT = "这篇笔记没有可转录的视频"
 APPLE_EPISODE_HINT = "请打开某一集，再粘贴这一集的苹果播客链接"
 YOUTUBE_UNREACHABLE_HINT = "这台服务器连不上 YouTube，暂时没法解析这条链接"
 YOUTUBE_DISABLED_HINT = "线上体验版暂不支持 YouTube，请下载本地版（GitHub Release）"
-PUBLIC_HOST_HINT = "线上体验版只支持小宇宙、B 站、小红书、苹果播客的公开链接"
+PUBLIC_HOST_HINT = "线上体验版只支持小宇宙、B 站、小红书、抖音、微信、苹果播客"
+WECHAT_HINT = "微信视频号暂时解析不到"
+# Old public-web copy; keep matching historical errors, surface as LOGIN_PARSE_HINT.
 PUBLIC_COOKIE_HINT = "线上体验版不接受登录 Cookie，请只转录公开内容，或改用本地版"
 PUBLIC_RATE_HINT = "提交太频繁，请稍后再试"
 PUBLIC_BUSY_HINT = "您有任务正在进行，请等完成后再提交"
@@ -261,6 +277,10 @@ _PUBLIC_HOSTS = (
     "xiaohongshu.com",
     "xhslink.com",
     "xhslink.cn",
+    "douyin.com",
+    "iesdouyin.com",
+    "weixin.qq.com",
+    "channels.weixin.qq.com",
     "podcasts.apple.com",
     "itunes.apple.com",
 )
@@ -297,11 +317,17 @@ def is_login_required(text: str) -> bool:
     # Old mixed copy is not a login signal.
     raw = raw.replace("可能需要登录", "")
     low = raw.lower().replace("’", "'").replace("‘", "'")
+    # B 站 412 / 风控、yt-dlp 随口提 --cookies，刷新后再试常常就能过，不能当成要登录。
     if "412" in raw or "precondition failed" in low:
+        return False
+    # 抖音要的是浏览器访客 Cookie，不一定已登录。
+    if "fresh cookies" in low or "not necessarily logged in" in low:
         return True
     if "300031" in raw or "this page isn't available" in low:
         return True
     if "登录状态" in raw or "需要登录后" in raw:
+        return True
+    if "不接受登录 Cookie" in raw:
         return True
     return any(
         k in low
@@ -309,10 +335,6 @@ def is_login_required(text: str) -> bool:
             "sign in",
             "login required",
             "please log in",
-            "cookies are needed",
-            "not a bot",
-            "confirm you",
-            "use --cookies",
             "age-restricted",
             "members-only",
             "join this channel",
@@ -438,10 +460,10 @@ def friendly_error(text: str) -> str:
         return NO_MEDIA_HINT
     if YOUTUBE_DISABLED_HINT in raw:
         return YOUTUBE_DISABLED_HINT
-    if PUBLIC_HOST_HINT in raw:
+    if PUBLIC_HOST_HINT in raw or "线上体验版只支持" in raw:
         return PUBLIC_HOST_HINT
     if PUBLIC_COOKIE_HINT in raw:
-        return PUBLIC_COOKIE_HINT
+        return LOGIN_PARSE_HINT
     if PUBLIC_RATE_HINT in raw:
         return PUBLIC_RATE_HINT
     if PUBLIC_BUSY_HINT in raw:
@@ -450,6 +472,10 @@ def friendly_error(text: str) -> str:
         return YOUTUBE_UNREACHABLE_HINT
     if APPLE_EPISODE_HINT in raw:
         return APPLE_EPISODE_HINT
+    if WECHAT_HINT in raw:
+        return WECHAT_HINT
+    if "412" in raw or "precondition failed" in low or "请求被拦截" in raw or "风控" in raw:
+        return TEMPORARY_PARSE_HINT
     if is_charge_need_login(raw):
         return CHARGE_NEED_LOGIN_HINT
     if is_charge_gated(raw):

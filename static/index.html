@@ -7,14 +7,20 @@
   <script>
     (function () {
       try {
+        var h = (location.hostname || "").toLowerCase();
+        if (h === "127.0.0.1" || h === "localhost" || h === "::1") {
+          document.documentElement.classList.add("mt-local");
+        }
         if (new URLSearchParams(location.search).get("desktop") === "1" || window.pywebview) {
           document.documentElement.classList.add("mt-desktop");
         }
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="/static/ui.css?v=cloud22">
-  <link rel="stylesheet" href="/static/style.css?v=cloud22">
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/ui.css?v=cloud29">
+  <link rel="stylesheet" href="/static/style.css?v=cloud29">
 </head>
 <body>
   <canvas id="sky" class="sky" aria-hidden="true"></canvas>
@@ -25,7 +31,7 @@
         <div class="bar">
           <div class="url-wrap" id="urlWrap">
             <input id="urlInput" class="url-input" type="text" inputmode="url" autocomplete="off"
-              placeholder="粘贴小宇宙/B 站/小红书/苹果播客网址链接">
+              placeholder="粘贴小宇宙/B 站/小红书/抖音/微信/苹果播客网址链接">
             <button type="button" class="url-clear" id="urlClear" aria-label="清除链接">
               <img src="/static/img/icon-url-clear.svg" alt="" width="20" height="20">
             </button>
@@ -46,21 +52,20 @@
   <div class="overlay" id="loginOverlay" hidden>
     <div class="modal" role="dialog" aria-labelledby="loginTitle">
       <div class="modal-head">
-        <h2 id="loginTitle">读取登录状态</h2>
+        <h2 id="loginTitle" class="login-title">
+          读取登录状态
+          <span class="has-tip">
+            <button type="button" class="icon-btn icon-btn--sm" id="loginInfoBtn" aria-label="说明">
+              <img src="/static/img/icon-info.svg" alt="" width="20" height="20">
+            </button>
+            <span class="need-tip" id="loginNeedTip" role="tooltip">只用于这次解析，不会保存。</span>
+          </span>
+        </h2>
         <button type="button" class="icon-btn" id="loginClose" aria-label="关闭">
           <img src="/static/img/icon-close.svg" alt="" width="24" height="24">
         </button>
       </div>
-      <p class="modal-lead">
-        <span id="loginLeadText">将读取浏览器中已经有的登录 Cookie，用于解析登录后才能查看的视频，这不会暴露您的隐私。</span>
-        <span class="has-tip">
-          <button type="button" class="icon-btn icon-btn--sm" id="loginInfoBtn" aria-label="为什么不会暴露隐私">
-            <img src="/static/img/icon-info.svg" alt="" width="20" height="20">
-          </button>
-          <span class="need-tip" id="loginNeedTip" role="tooltip">登录 Cookie 只留在这台电脑上给解析用，不会上传，也读不到账号密码。</span>
-        </span>
-      </p>
-      <div id="loginLocalPane">
+      <div id="loginLocalPane" hidden>
         <div class="login-row">
           <label class="field">
             <span>选择浏览器</span>
@@ -69,12 +74,9 @@
           <button type="button" class="btn btn--solid" id="importCookieBtn">点击读取</button>
         </div>
       </div>
-      <div id="loginCloudPane" hidden>
-        <p class="modal-lead" id="loginCloudHint">打开网站并登录后，把 SESSDATA 贴到下面即可，不用装扩展。</p>
-        <label class="field">
-          <span>登录 Cookie</span>
-          <textarea id="cookiePaste" class="cookie-paste" rows="3" placeholder="SESSDATA=……"></textarea>
-        </label>
+      <div id="loginCloudPane">
+        <p class="login-hint" id="loginCloudHint">打开 bilibili.com 并登录，F12 → Cookies，把 SESSDATA 贴进来</p>
+        <textarea id="cookiePaste" class="cookie-paste" rows="3"></textarea>
         <button type="button" class="btn btn--solid" id="uploadCookieBtn">读取并继续</button>
         <input type="file" id="cookieFile" accept=".txt,text/plain" hidden>
       </div>
@@ -233,11 +235,36 @@
     </div>
   </div>
 
+  <p class="beian">
+    <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">蜀ICP备2026059674号-1</a>
+  </p>
+
   <div class="toast" id="toast" hidden role="status"></div>
 
   <script src="/static/config.js?v=cloud19"></script>
   <script src="/static/ui.js?v=apple-pod1"></script>
   <script src="/static/galaxy.js?v=cloud22" defer></script>
-  <script src="/static/app.js?v=cloud19"></script>
+  <script src="/static/app.js?v=cloud29"></script>
+  <script>
+    (function () {
+      var h = (location.hostname || "").toLowerCase();
+      var local = h === "127.0.0.1" || h === "localhost" || h === "::1";
+      function paintPublicLogin() {
+        if (local) return;
+        var cloud = document.getElementById("loginCloudPane");
+        var loc = document.getElementById("loginLocalPane");
+        if (cloud) cloud.hidden = false;
+        if (loc) loc.hidden = true;
+      }
+      var orig = window.paintLoginMode;
+      if (typeof orig === "function") {
+        window.paintLoginMode = function () {
+          orig();
+          paintPublicLogin();
+        };
+      }
+      paintPublicLogin();
+    })();
+  </script>
 </body>
 </html>

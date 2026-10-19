@@ -2,9 +2,11 @@ import os
 import re
 import json
 import shutil
+import time
 import uuid
 import asyncio
 import subprocess
+import urllib.error
 import urllib.request
 import yt_dlp
 import logging
@@ -19,10 +21,13 @@ from text_utils import (
     CHARGE_VIDEO_HINT,
     LOGIN_PARSE_HINT,
     NO_MEDIA_HINT,
+    WECHAT_HINT,
     YOUTUBE_DISABLED_HINT,
     YOUTUBE_UNREACHABLE_HINT,
     extract_share_url,
     is_charge_gated,
+    is_douyin_url,
+    is_weixin_url,
     is_xiaohongshu_url,
     normalize_xiaohongshu_url,
     strip_ansi as _clean,
@@ -84,7 +89,10 @@ class VideoProcessor:
             },
         }
         self.ydl_opts = opts
-        if Path(self.COOKIE_FILE).exists():
+        self.runtime_cookiefile: Optional[str] = None
+        if config.PUBLIC_WEB:
+            logger.info("公网版不落盘 Cookie，解析时使用当前会话的临时登录状态")
+        elif Path(self.COOKIE_FILE).exists():
             logger.info(f"已加载 Cookie 文件: {self.COOKIE_FILE}")
         else:
             logger.info("未找到 cookies.txt，以匿名模式访问（B站等平台可能受限）")
@@ -102,13 +110,28 @@ class VideoProcessor:
             headers["Origin"] = "https://www.xiaohongshu.com"
         elif "youtube.com" in u or "youtu.be" in u:
             headers["Referer"] = "https://www.youtube.com/"
+        elif "douyin.com" in u or "iesdouyin.com" in u:
+            headers["Referer"] = "https://www.douyin.com/"
+        elif "weixin.qq.com" in u or "channels.weixin.qq.com" in u:
+            headers["Referer"] = "https://channels.weixin.qq.com/"
         return headers
+
+    def _cookie_path(self) -> Optional[Path]:
+        runtime = (self.runtime_cookiefile or "").strip()
+        if runtime:
+            path = Path(runtime)
+            return path if path.is_file() else None
+        if config.PUBLIC_WEB:
+            return None
+        path = Path(self.COOKIE_FILE)
+        return path if path.is_file() else None
 
     def _ydl_opts(self, url: str, extra: dict) -> dict:
         opts = dict(extra)
         opts["http_headers"] = self._headers_for(url)
-        if Path(self.COOKIE_FILE).exists() and not config.PUBLIC_WEB:
-            opts["cookiefile"] = self.COOKIE_FILE
+        cookie_path = self._cookie_path()
+        if cookie_path:
+            opts["cookiefile"] = str(cookie_path)
         else:
             opts.pop("cookiefile", None)
         u = (url or "").lower()
@@ -151,6 +174,12 @@ class VideoProcessor:
     def _is_xiaohongshu(self, url: str) -> bool:
         return is_xiaohongshu_url(url)
 
+    def _is_douyin(self, url: str) -> bool:
+        return is_douyin_url(url)
+
+    def _is_weixin(self, url: str) -> bool:
+        return is_weixin_url(url)
+
     def _follow_redirect(self, url: str) -> str:
         req = urllib.request.Request(url, headers=self._headers_for(url))
         try:
@@ -162,17 +191,21 @@ class VideoProcessor:
 
     def prepare_url(self, url: str) -> str:
         raw = extract_share_url(url)
-        if not self._is_xiaohongshu(raw):
-            return raw
-        prepared = normalize_xiaohongshu_url(raw)
-        host = (prepared or "").lower()
-        if "xhslink.com" in host or "xhslink.cn" in host:
-            prepared = normalize_xiaohongshu_url(self._follow_redirect(prepared))
-        return prepared
+        if self._is_xiaohongshu(raw):
+            prepared = normalize_xiaohongshu_url(raw)
+            host = (prepared or "").lower()
+            if "xhslink.com" in host or "xhslink.cn" in host:
+                prepared = normalize_xiaohongshu_url(self._follow_redirect(prepared))
+            return prepared
+        if self._is_douyin(raw) and "v.douyin.com" in (raw or "").lower():
+            return self._follow_redirect(raw)
+        if self._is_weixin(raw) and "weixin.qq.com/sph/" in (raw or "").lower():
+            return self._follow_redirect(raw)
+        return raw
 
     def _cookie_header_for(self, domain_part: str) -> str:
-        path = Path(self.COOKIE_FILE)
-        if not path.exists():
+        path = self._cookie_path()
+        if path is None:
             return ""
         try:
             pairs = []
@@ -232,7 +265,7 @@ class VideoProcessor:
         note_id = self._xiaohongshu_note_id(prepared)
         headers = self._headers_for(prepared)
         cookie = self._cookie_header_for("xiaohongshu")
-        if cookie and not config.PUBLIC_WEB:
+        if cookie:
             headers["Cookie"] = cookie
         req = urllib.request.Request(prepared, headers=headers)
         try:
@@ -386,9 +419,28 @@ class VideoProcessor:
         cookie = self._bilibili_cookie_header()
         if cookie:
             headers["Cookie"] = cookie
-        req = urllib.request.Request(api_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            return json.loads(resp.read().decode("utf-8", "replace"))
+        last_err: Optional[Exception] = None
+        for attempt in range(2):
+            try:
+                req = urllib.request.Request(api_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    payload = json.loads(resp.read().decode("utf-8", "replace"))
+                code = int((payload or {}).get("code") or 0)
+                if code in (-412, 412, -403, -799) and attempt == 0:
+                    logger.info("B站接口风控 %s，稍后重试", code)
+                    time.sleep(1.2)
+                    continue
+                return payload
+            except urllib.error.HTTPError as e:
+                last_err = e
+                if e.code in (403, 412) and attempt == 0:
+                    logger.info("B站接口 HTTP %s，稍后重试", e.code)
+                    time.sleep(1.2)
+                    continue
+                raise
+        if last_err:
+            raise last_err
+        raise Exception("暂时无法解析")
 
     def _bilibili_view(self, bvid: str) -> dict:
         payload = self._bilibili_json(
@@ -432,8 +484,8 @@ class VideoProcessor:
         raise Exception("暂时无法下载音频")
 
     def _bilibili_cookie_header(self) -> str:
-        path = Path(self.COOKIE_FILE)
-        if not path.exists():
+        path = self._cookie_path()
+        if path is None:
             return ""
         try:
             pairs = []
@@ -495,7 +547,16 @@ class VideoProcessor:
         low = str(err).lower()
         return any(
             k in low
-            for k in ("403", "forbidden", "not a bot", "confirm you")
+            for k in (
+                "403",
+                "412",
+                "forbidden",
+                "precondition",
+                "not a bot",
+                "confirm you",
+                "风控",
+                "请求被拦截",
+            )
         )
 
     def _subtitle_priority(self, url: str) -> list:
@@ -523,7 +584,14 @@ class VideoProcessor:
                 raise
             logger.info("平台第一次拒绝访问，1.2 秒后重试一次")
             await asyncio.sleep(1.2)
-            return await asyncio.to_thread(fn)
+            try:
+                return await asyncio.to_thread(fn)
+            except Exception as e2:
+                if not self._retryable(e2):
+                    raise
+                logger.info("第二次仍被拒绝，2.4 秒后再试一次")
+                await asyncio.sleep(2.4)
+                return await asyncio.to_thread(fn)
 
     async def normalize_local_media_to_m4a(self, input_path: Path, output_dir: Path) -> str:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -736,8 +804,15 @@ class VideoProcessor:
 
         except Exception as e:
             clean_err = _clean(str(e))
-            if self._is_xiaohongshu(url) and "no video formats" in clean_err.lower():
+            low = clean_err.lower()
+            if self._is_xiaohongshu(url) and "no video formats" in low:
                 raise Exception(LOGIN_PARSE_HINT)
+            if self._is_douyin(url) and (
+                "fresh cookies" in low or "not necessarily logged in" in low
+            ):
+                raise Exception(LOGIN_PARSE_HINT)
+            if self._is_weixin(url) and "unsupported url" in low:
+                raise Exception(WECHAT_HINT)
             logger.warning(f"字幕获取失败（将回退至音频下载）: {e}")
             return None, video_title, None, video_duration, charge, page_meta
         finally:
@@ -1041,11 +1116,17 @@ class VideoProcessor:
             low = clean_err.lower()
             if self._is_xiaohongshu(url) and "no video formats" in low:
                 raise Exception(LOGIN_PARSE_HINT)
+            if self._is_douyin(url) and (
+                "fresh cookies" in low or "not necessarily logged in" in low
+            ):
+                raise Exception(LOGIN_PARSE_HINT)
+            if self._is_weixin(url) and "unsupported url" in low:
+                raise Exception(WECHAT_HINT)
             gated = is_charge_gated(clean_err)
             if not gated:
                 gated = await asyncio.to_thread(self._bilibili_is_charge, url)
             if gated:
-                if Path(self.COOKIE_FILE).exists():
+                if self._cookie_path() is not None:
                     raise Exception(CHARGE_VIDEO_HINT)
                 raise Exception(CHARGE_NEED_LOGIN_HINT)
             raise Exception(f"下载视频失败: {clean_err}")

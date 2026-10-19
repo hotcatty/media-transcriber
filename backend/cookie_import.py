@@ -61,6 +61,17 @@ SITES = {
         "domains": ("xiaohongshu.com",),
         "cookie_names": frozenset({"web_session"}),
     },
+    "douyin": {
+        "id": "douyin",
+        "label": "抖音",
+        "host": "douyin.com",
+        "url": "https://www.douyin.com",
+        "probe": "https://www.douyin.com",
+        "domains": ("douyin.com", "iesdouyin.com"),
+        "cookie_names": frozenset(
+            {"sessionid", "sessionid_ss", "sid_tt", "s_v_web_id", "ttwid"}
+        ),
+    },
 }
 
 _APP_PATHS = {
@@ -97,6 +108,8 @@ def site_from_url(url: str) -> str:
         return "youtube"
     if "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u:
         return "xiaohongshu"
+    if "douyin.com" in u or "iesdouyin.com" in u:
+        return "douyin"
     return "bilibili"
 
 
@@ -192,27 +205,39 @@ _PRIMARY_COOKIE = {
     "bilibili": "SESSDATA",
     "youtube": "LOGIN_INFO",
     "xiaohongshu": "web_session",
+    "douyin": "sessionid",
 }
 
 
-def save_netscape_text(text: str, site: str = "bilibili") -> dict:
-    """Save pasted SESSDATA or a cookies.txt. Never returns cookie values."""
+def build_netscape_text(text: str, site: str = "bilibili") -> str:
+    """Validate pasted SESSDATA / cookies.txt and return Netscape text.
+
+    Never writes cookies.txt. Callers decide whether to persist on disk
+    (local helper) or keep the blob in memory (public trial).
+    """
     raw = (text or "").replace("\r\n", "\n").strip()
     if len(raw) > 256_000:
         raise CookieImportError("内容太大")
     if not _looks_like_netscape(raw):
         raw = _as_netscape(raw, site)
         if not raw:
-            raise CookieImportError("请把登录 Cookie 贴进来")
+            raise CookieImportError("请贴进来")
+    meta = site_info(site)
+    if not _cookie_text_has_login(raw, meta):
+        raise CookieImportError(
+            f"没有 {meta['label']} 的登录状态。"
+            f"请打开 {meta['host']} 登录后再贴一次"
+        )
+    return raw if raw.endswith("\n") else raw + "\n"
+
+
+def save_netscape_text(text: str, site: str = "bilibili") -> dict:
+    """Save pasted SESSDATA or a cookies.txt. Never returns cookie values."""
+    raw = build_netscape_text(text, site)
     meta = site_info(site)
     tmp = config.COOKIE_FILE.with_name(f".cookies-upload-{os.getpid()}.tmp")
     try:
-        tmp.write_text(raw + "\n", encoding="utf-8")
-        if not _cookie_file_has_login(tmp, meta):
-            raise CookieImportError(
-                f"文件里没有 {meta['label']} 的登录状态。"
-                f"请先打开 {meta['host']} 并登录，再导出一次"
-            )
+        tmp.write_text(raw, encoding="utf-8")
         _commit_cookie_file(tmp)
     except CookieImportError:
         _unlink_quiet(tmp)
@@ -274,7 +299,11 @@ def _cookie_file_has_login(path: Path, meta: dict) -> bool:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    for line in text.splitlines():
+    return _cookie_text_has_login(text, meta)
+
+
+def _cookie_text_has_login(text: str, meta: dict) -> bool:
+    for line in (text or "").splitlines():
         if not line:
             continue
         if line.startswith("#HttpOnly_"):

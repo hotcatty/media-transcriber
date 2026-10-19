@@ -18,6 +18,7 @@ import config
 import cookie_import
 import engines
 import eta
+import session_cookies
 import formats
 import settings_store
 from engines import Segment
@@ -660,7 +661,12 @@ class JobManager:
         await self.broadcast(self.store.get(task_id))
 
         try:
-            await self._execute(task_id, cancel)
+            with session_cookies.materialize(task.session_id) as cookie_path:
+                self.video.runtime_cookiefile = cookie_path
+                try:
+                    await self._execute(task_id, cancel)
+                finally:
+                    self.video.runtime_cookiefile = None
         except Cancelled:
             self.store.update(
                 task_id, status=CANCELLED, stage="cancelled",
@@ -960,7 +966,9 @@ class JobManager:
                 if cancel.is_set():
                     raise Cancelled()
                 async def _parse_podcast():
-                    return await extract_podcast_audio(task.source)
+                    return await extract_podcast_audio(
+                        task.source, cookiefile=self.video.runtime_cookiefile
+                    )
                 info = await self._run_with_eta(
                     task_id, "parse", "正在解析视频…", eta.prior_parse(), _parse_podcast,
                 )

@@ -368,11 +368,10 @@ function humanizeError(raw) {
   return "出了点问题，暂时没法完成这一步";
 }
 
-const LOGIN_PARSE_HINT = "暂时解析不到，请带上登录状态再试一次";
-const LOGIN_NEED_TIP = "没有登录时拿不到可解析的地址，需要读取本机已有的登录状态。";
-const LOGIN_CLOUD_TIP = "登录 Cookie 只用于这次解析，不会显示在页面上，也读不到账号密码。";
-const CHARGE_NEED_LOGIN_HINT = "该视频为充电视频，请读取已充电账号的登录状态";
-const CHARGE_NEED_TIP = "充电内容只对已充电账号开放，需要读取那个账号的登录状态。";
+const LOGIN_PARSE_HINT = "需要登录后再试";
+const LOGIN_NEED_TIP = "读取本机浏览器里已有的登录状态。";
+const LOGIN_CLOUD_TIP = "只用于这次解析，不会保存。";
+const CHARGE_NEED_LOGIN_HINT = "充电视频，请读取已充电账号";
 
 function asNeedsLogin(task) {
   const steps = Array.isArray(task.steps) ? task.steps.map((s) => (
@@ -418,6 +417,8 @@ function platformOf(source) {
   if (u.includes("xiaohongshu.com") || u.includes("xhslink.com") || u.includes("xhslink.cn")) return "xiaohongshu";
   if (u.includes("podcasts.apple.com") || u.includes("itunes.apple.com")) return "apple";
   if (u.includes("youtube.com") || u.includes("youtu.be")) return "youtube";
+  if (u.includes("douyin.com") || u.includes("iesdouyin.com")) return "douyin";
+  if (u.includes("weixin.qq.com") || u.includes("channels.weixin.qq.com")) return "weixin";
   return "generic";
 }
 
@@ -435,6 +436,7 @@ const LOGIN_SITES = {
   youtube: { host: "youtube.com", url: "https://www.youtube.com", label: "YouTube" },
   xiaohongshu: { host: "xiaohongshu.com", url: "https://www.xiaohongshu.com", label: "小红书" },
   bilibili: { host: "bilibili.com", url: "https://www.bilibili.com", label: "B 站" },
+  douyin: { host: "douyin.com", url: "https://www.douyin.com", label: "抖音" },
 };
 
 function loginMeta(site) {
@@ -549,8 +551,8 @@ function isLocalHelper() {
   return h === "127.0.0.1" || h === "localhost" || h === "::1";
 }
 
-const PUBLIC_PLACEHOLDER = "粘贴小宇宙/B 站/小红书/苹果播客网址链接";
-const LOCAL_PLACEHOLDER = "粘贴小宇宙/B 站/小红书/YouTube/苹果播客网址链接";
+const PUBLIC_PLACEHOLDER = "粘贴小宇宙/B 站/小红书/抖音/微信/苹果播客网址链接";
+const LOCAL_PLACEHOLDER = "粘贴小宇宙/B 站/小红书/抖音/微信/YouTube/苹果播客网址链接";
 const YOUTUBE_PUBLIC_HINT = "线上体验版暂不支持 YouTube，请下载本地版";
 
 function isYoutubeUrl(url) {
@@ -668,12 +670,9 @@ function renderJob(task) {
       let extra = "";
       if (s.state === "needs_login") {
         const charged = s.id === "download" || /充电/.test(s.hint || "");
-        const tip = charged ? CHARGE_NEED_TIP : (isLocalHelper() ? LOGIN_NEED_TIP : LOGIN_CLOUD_TIP);
         const hint = s.hint || (charged ? CHARGE_NEED_LOGIN_HINT : LOGIN_PARSE_HINT);
         extra = `<div class="step-login">
-          <span class="need has-tip">${escapeHtml(hint)}
-            ${UI.infoBtn(`data-inline-info="1"`, "为什么需要登录")}<span class="need-tip" role="tooltip">${escapeHtml(tip)}</span>
-          </span>
+          <span class="need">${escapeHtml(hint)}</span>
           <button type="button" class="link" data-open-login="1">读取登录状态</button>
         </div>`;
       } else if (s.state === "failed") {
@@ -914,24 +913,17 @@ function retryReadLogin() {
 function paintLoginMode() {
   const local = isLocalHelper();
   if ($("loginLocalPane")) $("loginLocalPane").hidden = !local;
-  if ($("loginCloudPane")) $("loginCloudPane").hidden = true;
-  if ($("loginLeadText")) {
-    $("loginLeadText").textContent = local
-      ? "将读取浏览器中已经有的登录 Cookie，用于解析登录后才能查看的视频，这不会暴露您的隐私。"
-      : "线上体验版只转录公开内容。登录后才能看的视频，请用本地版。";
-  }
+  if ($("loginCloudPane")) $("loginCloudPane").hidden = local;
   if ($("loginNeedTip")) {
-    $("loginNeedTip").textContent = local
-      ? "登录 Cookie 只留在这台电脑上给解析用，不会上传，也读不到账号密码。"
-      : LOGIN_CLOUD_TIP;
+    $("loginNeedTip").textContent = local ? LOGIN_NEED_TIP : LOGIN_CLOUD_TIP;
   }
-  const names = { bilibili: "SESSDATA", youtube: "LOGIN_INFO", xiaohongshu: "web_session" };
+  const names = { bilibili: "SESSDATA", youtube: "LOGIN_INFO", xiaohongshu: "web_session", douyin: "sessionid" };
   const key = names[loginSite] || "SESSDATA";
   if ($("loginCloudHint")) {
-    $("loginCloudHint").textContent = `打开 ${loginHost} 并登录。在页面按 F12，打开 Application → Cookies，复制 ${key} 贴到下面。`;
+    $("loginCloudHint").textContent = `打开 ${loginHost} 并登录，F12 → Cookies，把 ${key} 贴进来`;
   }
   const paste = $("cookiePaste");
-  if (paste) paste.placeholder = `${key}=……`;
+  if (paste) paste.removeAttribute("placeholder");
 }
 
 function openLogin() {
@@ -989,7 +981,7 @@ async function uploadCookies() {
   const file = input && input.files && input.files[0];
   const text = paste && paste.value.trim();
   if (!file && !text) {
-    showToast("请先贴上登录 Cookie");
+    showToast("请先贴进来");
     return;
   }
   btn.disabled = true;

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -80,7 +81,7 @@ class PodcastInfo:
 # 小宇宙提取
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _fetch_xiaoyuzhou(url: str) -> PodcastInfo:
+async def _fetch_xiaoyuzhou(url: str, cookiefile: Optional[str] = None) -> PodcastInfo:
     """
     解析小宇宙页面，提取音频直链。
     策略：
@@ -89,7 +90,7 @@ async def _fetch_xiaoyuzhou(url: str) -> PodcastInfo:
     """
     # ── 方案 1：yt-dlp ──────────────────────────────────────────────────────
     try:
-        info = await _ytdlp_extract_info(url)
+        info = await _ytdlp_extract_info(url, cookiefile)
         if info and info.get("url"):
             return PodcastInfo(
                 audio_url=info["url"],
@@ -106,7 +107,7 @@ async def _fetch_xiaoyuzhou(url: str) -> PodcastInfo:
     return await _parse_xiaoyuzhou_html(url)
 
 
-async def _ytdlp_extract_info(url: str) -> Optional[dict]:
+async def _ytdlp_extract_info(url: str, cookiefile: Optional[str] = None) -> Optional[dict]:
     """用 yt-dlp 提取单条音频信息，只获取 URL 不下载。"""
     import yt_dlp
 
@@ -119,7 +120,10 @@ async def _ytdlp_extract_info(url: str) -> Optional[dict]:
     }
     try:
         import config as _cfg
-        if _cfg.COOKIE_FILE.exists() and not getattr(_cfg, "PUBLIC_WEB", False):
+        runtime = (cookiefile or "").strip()
+        if runtime and Path(runtime).is_file():
+            opts["cookiefile"] = runtime
+        elif _cfg.COOKIE_FILE.exists() and not getattr(_cfg, "PUBLIC_WEB", False):
             opts["cookiefile"] = str(_cfg.COOKIE_FILE)
         if getattr(_cfg, "YOUTUBE_PROXY", "") and (
             "youtube.com" in (url or "").lower() or "youtu.be" in (url or "").lower()
@@ -466,10 +470,10 @@ def _looks_like_audio_url(url: str) -> bool:
 # 喜马拉雅
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _fetch_ximalaya(url: str) -> PodcastInfo:
+async def _fetch_ximalaya(url: str, cookiefile: Optional[str] = None) -> PodcastInfo:
     """喜马拉雅走 yt-dlp。"""
     try:
-        info = await _ytdlp_extract_info(url)
+        info = await _ytdlp_extract_info(url, cookiefile)
         if info and info.get("url"):
             return PodcastInfo(
                 audio_url=info["url"],
@@ -582,11 +586,11 @@ def _merge_apple_description(ytdlp_desc: str, extra: dict) -> str:
     return description
 
 
-async def _fetch_apple_podcasts(url: str) -> PodcastInfo:
+async def _fetch_apple_podcasts(url: str, cookiefile: Optional[str] = None) -> PodcastInfo:
     if not apple_episode_id(url):
         raise ValueError(APPLE_EPISODE_HINT)
     try:
-        info = await _ytdlp_extract_info(url)
+        info = await _ytdlp_extract_info(url, cookiefile)
         if info and info.get("url"):
             extra = {}
             try:
@@ -616,7 +620,7 @@ async def _fetch_apple_podcasts(url: str) -> PodcastInfo:
 # 统一入口
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def extract_podcast_audio(url: str) -> PodcastInfo:
+async def extract_podcast_audio(url: str, cookiefile: Optional[str] = None) -> PodcastInfo:
     """
     根据 URL 自动选择提取策略，返回 PodcastInfo。
     调用方捕获异常并处理降级逻辑。
@@ -625,15 +629,15 @@ async def extract_podcast_audio(url: str) -> PodcastInfo:
     logger.info(f"播客平台识别: {platform} | URL: {url}")
 
     if platform == "xiaoyuzhou":
-        return await _fetch_xiaoyuzhou(url)
+        return await _fetch_xiaoyuzhou(url, cookiefile)
     elif platform == "ximalaya":
-        return await _fetch_ximalaya(url)
+        return await _fetch_ximalaya(url, cookiefile)
     elif platform == "apple_podcasts":
-        return await _fetch_apple_podcasts(url)
+        return await _fetch_apple_podcasts(url, cookiefile)
     else:
         # Apple Podcasts / Spotify / 其他：优先 yt-dlp
         try:
-            info = await _ytdlp_extract_info(url)
+            info = await _ytdlp_extract_info(url, cookiefile)
             if info and info.get("url"):
                 return PodcastInfo(
                     audio_url=info["url"],
