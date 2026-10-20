@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 入口 | http://maoting.online | 把下面那段话发给 Cursor / Claude Code / Codex | 本页 [Release](https://github.com/hotcatty/media-transcriber/releases/latest) 安装包 |
 | 怎么用 | 打开网页，粘贴链接 | 「把这个视频转成文字」 | 打开应用，粘贴链接 |
-| 平台 | 小宇宙、B 站、小红书、抖音、微信、苹果播客 | 小宇宙、B 站、小红书、抖音、微信、YouTube、苹果播客 | 同左 |
+| 平台 | 小宇宙、B 站、小红书、抖音、微信、苹果播客 | 增加youtube | 同左 |
 | 速度 | 人多会排队 | 本机 Turbo，大约比线上快三四倍 | 同左 |
 | 数据 | 缓存数据存在浏览器 | 音频和文稿只留在你电脑上 | 同左 |
 
