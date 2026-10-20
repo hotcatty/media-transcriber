@@ -507,6 +507,20 @@ class VideoProcessor:
         except Exception:
             return ""
 
+    def _bilibili_charge_locked(self, view: Optional[dict]) -> bool:
+        """充电专属且当前账号不能完播。已充电账号 is_upower_play=True，应继续下载。"""
+        if not view:
+            return False
+        exclusive = bool(view.get("is_upower_exclusive") or view.get("is_upower_preview"))
+        can_play = bool(view.get("is_upower_play"))
+        if exclusive:
+            logger.info(
+                "B站充电 exclusive=1 play=%s cookies=%s",
+                int(can_play),
+                int(self._cookie_path() is not None),
+            )
+        return exclusive and not can_play
+
     def _bilibili_is_charge(self, url: str, info: Optional[dict] = None) -> bool:
         """充电专属且当前账号不能完播（B 站 is_upower_*）。"""
         if not self._is_bilibili(url) and not self._bvid(url, info):
@@ -515,24 +529,7 @@ class VideoProcessor:
         if not bvid:
             return False
         try:
-            headers = self._headers_for("https://www.bilibili.com/")
-            cookie = self._bilibili_cookie_header()
-            if cookie:
-                headers["Cookie"] = cookie
-            req = urllib.request.Request(
-                f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}",
-                headers=headers,
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                payload = json.loads(resp.read().decode("utf-8", "replace"))
-            video = (payload or {}).get("data") or {}
-            exclusive = bool(
-                video.get("is_upower_exclusive") or video.get("is_upower_preview")
-            )
-            can_play = bool(video.get("is_upower_play"))
-            if exclusive and not can_play:
-                logger.info("B站充电视频（仅试看）: %s", bvid)
-                return True
+            return self._bilibili_charge_locked(self._bilibili_view(bvid))
         except Exception:
             logger.info("无法确认是否充电视频，按普通视频继续")
         return False
@@ -705,9 +702,7 @@ class VideoProcessor:
                     video_title = view.get("title") or video_title
                     video_duration = view.get("duration") or video_duration
                     page_meta = self._bilibili_page_meta(view)
-                    charge = bool(
-                        view.get("is_upower_exclusive") or view.get("is_upower_preview")
-                    )
+                    charge = self._bilibili_charge_locked(view)
                     logger.info("B站接口已解析: %s", video_title)
                 except Exception as e:
                     logger.info("B站接口解析失败，回退网页: %s", _clean(str(e))[:200])

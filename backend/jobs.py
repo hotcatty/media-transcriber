@@ -37,6 +37,7 @@ from task_store import (
 )
 from text_utils import (
     CHARGE_NEED_LOGIN_HINT,
+    CHARGE_VIDEO_HINT,
     LOGIN_PARSE_HINT,
     canonical_source,
     display_title,
@@ -1046,11 +1047,16 @@ class JobManager:
                     )
                 else:
                     if charge:
+                        err = (
+                            CHARGE_VIDEO_HINT
+                            if self.video.runtime_cookiefile
+                            else CHARGE_NEED_LOGIN_HINT
+                        )
                         await self._note(
-                            task_id, 16, "downloading", CHARGE_NEED_LOGIN_HINT,
+                            task_id, 16, "downloading", err,
                             title=title, duration=duration,
                         )
-                        raise RuntimeError(CHARGE_NEED_LOGIN_HINT)
+                        raise RuntimeError(err)
                     self._freeze_budget(task_id, duration)
                     loop = asyncio.get_running_loop()
                     last = [0.0]

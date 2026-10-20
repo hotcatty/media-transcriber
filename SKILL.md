@@ -5,7 +5,7 @@ description: 把视频/音频链接或本地文件转成简体文字稿并做内
 
 # 猫听转文字 Skill
 
-`$SKILL` = 本仓库根目录（已打开这个项目时），或 clone 到 `~/.claude/skills/media-transcriber/` / `~/.codex/skills/media-transcriber/` 的那份。
+`$SKILL` = 本仓库根目录（已打开这个项目时），或 clone 到 `~/.claude/skills/media-transcriber/` / `~/.codex/skills/media-transcriber/` 的那份。仓库已经在的话，先 `git pull`。
 
 全程本地跑：yt-dlp 拉音频，本机 Whisper Turbo 听写。不要把音视频或 Cookie 发到云端。
 
@@ -40,7 +40,7 @@ bash $SKILL/scripts/run.sh "<链接或本地文件>" --out "<目录>"
 1. 用户丢链接或文件、说「转成文字 / 讲了什么 / 拆解一下」时，直接跑上面的命令，不要先问一堆参数。
 2. 读 `transcript.txt`，**基于文稿给结论**：先一句话，再要点；不要把整篇原文糊回去，路径留给要原文的人。
 3. 文稿为空或短到不像话（脚本会 `WARN`）：当作没口播/纯字卡，如实说，不要编。
-4. 需要登录或充电视频：把脚本的中文提示原样告诉用户，让他们用本地网页版读取登录状态后再试，不要猜测内容。
+4. 需要登录或充电视频：把脚本的中文提示原样告诉用户。让他们用本地桌面版/网页版读取登录状态（会写到本机 `cookies.txt`）后再跑脚本，不要猜测内容。充电专属片必须是已经充过电的那个账号。
 5. 不要把下载的音频、Cookie、逐字稿提交进 git，除非用户明确要求。
 
 ## 平台

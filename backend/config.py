@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+APP_VERSION = "1.3.0"
+UPDATE_URL = "https://github.com/hotcatty/media-transcriber/releases/latest"
 
 # turbo is ~1.6G; leave a little headroom so a nearly-full disk is skipped.
 _MODEL_NEED_BYTES = 2 * 1024 * 1024 * 1024

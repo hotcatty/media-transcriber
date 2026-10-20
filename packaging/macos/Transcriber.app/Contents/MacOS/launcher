@@ -624,14 +624,6 @@ copy_bundled_app() {
 }
 
 refresh_app() {
-  if copy_bundled_app; then
-    log "using bundled app"
-    return 0
-  fi
-  if [[ -d "$DATA/app/backend" ]]; then
-    log "keep existing app copy"
-    return 0
-  fi
   local zip="$DATA/src.zip"
   local tmp="$DATA/src-unpack"
   log "refresh app from GitHub"
@@ -646,10 +638,19 @@ refresh_app() {
       rsync -a --delete --exclude temp --exclude .venv --exclude cookies.txt \
         "$inner/" "$DATA/app/"
       rm -rf "$tmp" "$zip"
+      log "using GitHub app"
       return 0
     fi
   fi
   rm -rf "$tmp" "$zip"
+  if copy_bundled_app; then
+    log "using bundled app"
+    return 0
+  fi
+  if [[ -d "$DATA/app/backend" ]]; then
+    log "keep existing app copy"
+    return 0
+  fi
   fail "没法下载程序文件。请检查网络后再打开一次。"
 }
 

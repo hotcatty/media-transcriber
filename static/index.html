@@ -19,8 +19,8 @@
   </script>
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/ui.css?v=cloud29">
-  <link rel="stylesheet" href="/static/style.css?v=cloud29">
+  <link rel="stylesheet" href="/static/ui.css?v=cloud31">
+  <link rel="stylesheet" href="/static/style.css?v=cloud31">
 </head>
 <body>
   <canvas id="sky" class="sky" aria-hidden="true"></canvas>
@@ -45,6 +45,7 @@
       </form>
       <div class="desk-links">
         <button type="button" class="link link--on-dark" id="historyBtn">查看历史记录</button>
+        <a class="link link--on-dark" id="updateLink" hidden target="_blank" rel="noopener">有新版本</a>
       </div>
     </div>
   </div>
@@ -75,7 +76,7 @@
         </div>
       </div>
       <div id="loginCloudPane">
-        <p class="login-hint" id="loginCloudHint">打开 bilibili.com 并登录，F12 → Cookies，把 SESSDATA 贴进来</p>
+        <p class="login-hint" id="loginCloudHint">打开 bilibili.com 并登录，F12 → Network → 点开任意请求 → Cookie，整段贴进来</p>
         <textarea id="cookiePaste" class="cookie-paste" rows="3"></textarea>
         <button type="button" class="btn btn--solid" id="uploadCookieBtn">读取并继续</button>
         <input type="file" id="cookieFile" accept=".txt,text/plain" hidden>
@@ -244,7 +245,7 @@
   <script src="/static/config.js?v=cloud19"></script>
   <script src="/static/ui.js?v=apple-pod1"></script>
   <script src="/static/galaxy.js?v=cloud22" defer></script>
-  <script src="/static/app.js?v=cloud29"></script>
+  <script src="/static/app.js?v=cloud31"></script>
   <script>
     (function () {
       var h = (location.hostname || "").toLowerCase();

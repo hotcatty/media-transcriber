@@ -13,6 +13,8 @@ import secrets
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -143,9 +145,23 @@ async def lifespan(_: FastAPI):
     jobs.stop()
 
 
+def _version_parts(tag: str) -> tuple:
+    out = []
+    for part in str(tag or "").lstrip("v").split("."):
+        try:
+            out.append(int(part))
+        except ValueError:
+            out.append(0)
+    return tuple(out or (0,))
+
+
+def _version_newer(latest: str, current: str) -> bool:
+    return _version_parts(latest) > _version_parts(current)
+
+
 app = FastAPI(
     title="媒体转录器",
-    version="3.0.0",
+    version=config.APP_VERSION,
     lifespan=lifespan,
     docs_url=None if config.PUBLIC_WEB else "/docs",
     redoc_url=None if config.PUBLIC_WEB else "/redoc",
@@ -223,9 +239,41 @@ async def ping():
     return {
         "ok": True,
         "app": "media-transcriber",
+        "version": config.APP_VERSION,
         "preparing": False,
         "public_web": bool(config.PUBLIC_WEB),
         "youtube": not config.PUBLIC_WEB,
+    }
+
+
+@app.get("/api/update")
+async def update_check(request: Request):
+    current = config.APP_VERSION
+    empty = {"current": current, "latest": current, "newer": False, "url": ""}
+    if config.PUBLIC_WEB or not _is_local_helper(request):
+        return empty
+    latest = current
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/hotcatty/media-transcriber/releases/latest",
+            headers={
+                "User-Agent": "media-transcriber",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+        tag = str(data.get("tag_name") or "").lstrip("v")
+        if tag:
+            latest = tag
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
+        return empty
+    newer = _version_newer(latest, current)
+    return {
+        "current": current,
+        "latest": latest,
+        "newer": newer,
+        "url": config.UPDATE_URL if newer else "",
     }
 
 

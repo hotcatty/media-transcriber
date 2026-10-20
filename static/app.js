@@ -48,6 +48,17 @@ function opNote(event, detail) {
   if (opLog.length > OP_LOG_MAX) opLog.shift();
 }
 
+function paintUpdateLink() {
+  if (!isLocalHelper()) return;
+  const el = $("updateLink");
+  if (!el) return;
+  mtFetch("/api/update").then((r) => r.json()).then((data) => {
+    if (!data || !data.newer || !data.url) return;
+    el.href = data.url;
+    el.hidden = false;
+  }).catch(() => {});
+}
+
 function isMacDesktop() {
   const ua = navigator.userAgent || "";
   return /Mac/i.test(ua) && !/iPhone|iPad|iPod/i.test(ua);
@@ -920,7 +931,9 @@ function paintLoginMode() {
   const names = { bilibili: "SESSDATA", youtube: "LOGIN_INFO", xiaohongshu: "web_session", douyin: "sessionid" };
   const key = names[loginSite] || "SESSDATA";
   if ($("loginCloudHint")) {
-    $("loginCloudHint").textContent = `打开 ${loginHost} 并登录，F12 → Cookies，把 ${key} 贴进来`;
+    $("loginCloudHint").textContent = loginSite === "bilibili"
+      ? `打开 ${loginHost} 并登录，F12 → Network → 点开任意请求 → Cookie，整段贴进来`
+      : `打开 ${loginHost} 并登录，F12 → Cookies，把 ${key} 贴进来`;
   }
   const paste = $("cookiePaste");
   if (paste) paste.removeAttribute("placeholder");
@@ -1730,6 +1743,7 @@ document.addEventListener("DOMContentLoaded", () => {
       $("urlInput").value = share;
       syncUrlClear();
     }
+    paintUpdateLink();
     if (runLabScene(scene)) {
       return;
     }

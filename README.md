@@ -34,7 +34,7 @@
 请先打开或 git clone 上面这个仓库，不要在当前其它项目里找 README。
 Claude Code 请 clone 到 ~/.claude/skills/media-transcriber
 Codex 请 clone 到 ~/.codex/skills/media-transcriber
-Cursor 已经打开该仓库就直接用；否则先 clone 再打开。
+Cursor 已经打开该仓库就先 git pull 再用；否则先 clone 再打开。
 然后：
 1. 读这个仓库的 SKILL.md（https://github.com/hotcatty/media-transcriber/blob/main/SKILL.md）
 2. 在该仓库根目录跑 bash scripts/run.sh ，缺 Python / ffmpeg / 依赖就按脚本提示装
@@ -74,7 +74,9 @@ https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTran
 1. 解压，双击 `start.bat`
 2. 如果弹出「Windows 已保护你的电脑」，点「更多信息」，再点「仍要运行」
 
-第一次打开会自动准备运行环境和语音模型（步骤里是「下载turbo模型」，大约 1.6 GB），需要等几分钟。以后再打开就可以直接贴链接。本地版支持小宇宙、B 站、小红书、抖音、微信、YouTube、苹果播客。
+第一次打开会自动准备运行环境和语音模型（步骤里是「下载turbo模型」，大约 1.6 GB），需要等几分钟。以后再打开就可以直接贴链接。本地版支持小宇宙、B 站、小红书、抖音、微信、YouTube、苹果播客。有更新时，Windows 再打开一次通常会自己跟上；Mac 请重新下载本页 Release。首页若出现「有新版本」，点进去即可。
+
+更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 安全
 

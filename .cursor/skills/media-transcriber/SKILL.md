@@ -5,7 +5,7 @@ description: 把视频/音频链接或本地文件转成简体文字稿并做内
 
 # 猫听转文字 Skill
 
-当前工作区就是这个项目。完整约定在仓库根目录 `SKILL.md`。
+当前工作区就是这个项目。完整约定在仓库根目录 `SKILL.md`。仓库已经 clone 过就先 `git pull`。
 
 ```bash
 bash scripts/run.sh "<链接或本地文件>"

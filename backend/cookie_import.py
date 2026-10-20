@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import config
@@ -228,6 +229,7 @@ def build_netscape_text(text: str, site: str = "bilibili") -> str:
             f"没有 {meta['label']} 的登录状态。"
             f"请打开 {meta['host']} 登录后再贴一次"
         )
+    raw = _refresh_session_expiry(raw)
     return raw if raw.endswith("\n") else raw + "\n"
 
 
@@ -248,25 +250,64 @@ def save_netscape_text(text: str, site: str = "bilibili") -> dict:
     return {"ok": True, "message": "已读取登录状态", "site": meta["id"]}
 
 
+def _session_expiry() -> str:
+    return str(int(time.time()) + 86400 * 400)
+
+
+def _netscape_line(domain: str, name: str, value: str) -> str:
+    return f"{domain}\tTRUE\t/\tTRUE\t{_session_expiry()}\t{name}\t{value}\n"
+
+
 def _as_netscape(text: str, site: str) -> str:
     meta = site_info(site)
     raw = (text or "").strip().strip('"').strip("'")
-    name = _PRIMARY_COOKIE.get(meta["id"], "SESSDATA")
-    value = ""
-    for cand in (name, *sorted(meta["cookie_names"])):
-        m = re.search(rf"(?i)\b{re.escape(cand)}\s*=\s*([^\s;]+)", raw)
-        if m:
-            name, value = cand, m.group(1).strip()
-            break
-    if not value and re.fullmatch(r"[A-Za-z0-9_\-%*.]{8,}", raw):
-        value = raw
-    if not value:
+    if raw.lower().startswith("cookie:"):
+        raw = raw.split(":", 1)[1].strip()
+    wanted = set(meta["cookie_names"])
+    primary = _PRIMARY_COOKIE.get(meta["id"], "SESSDATA")
+    wanted.add(primary)
+    found: dict[str, str] = {}
+    for match in re.finditer(r"(?:^|[;\s])([A-Za-z0-9_.-]+)\s*=\s*([^\s;]+)", raw):
+        name, value = match.group(1), match.group(2).strip().strip('"').strip("'")
+        if name in wanted and value:
+            found[name] = value
+    if not found:
+        for line in raw.splitlines():
+            parts = re.split(r"[\t ]+", line.strip(), maxsplit=1)
+            if len(parts) == 2 and parts[0] in wanted and parts[1].strip():
+                found[parts[0]] = parts[1].strip()
+    if not found and "\n" not in raw and "=" not in raw:
+        if re.fullmatch(r"[A-Za-z0-9_\-%*.,]{8,}", raw):
+            found[primary] = raw
+    if not found:
         return ""
     domain = "." + meta["host"].lstrip(".")
-    return (
-        "# Netscape HTTP Cookie File\n"
-        f"{domain}\tTRUE\t/\tTRUE\t0\t{name}\t{value}\n"
-    )
+    lines = ["# Netscape HTTP Cookie File\n"]
+    for name, value in found.items():
+        lines.append(_netscape_line(domain, name, value))
+    return "".join(lines)
+
+
+def _refresh_session_expiry(text: str) -> str:
+    """cookiejar treats Netscape expiry 0 as already expired."""
+    exp = _session_expiry()
+    out = []
+    for line in (text or "").splitlines():
+        prefix = ""
+        raw = line
+        if raw.startswith("#HttpOnly_"):
+            prefix = "#HttpOnly_"
+            raw = raw[len(prefix):]
+        if not raw or raw.startswith("#"):
+            out.append(line)
+            continue
+        parts = raw.split("\t")
+        if len(parts) >= 7 and parts[4] in ("0", ""):
+            parts[4] = exp
+            out.append(prefix + "\t".join(parts))
+        else:
+            out.append(line)
+    return "\n".join(out) + "\n"
 
 
 def _looks_like_netscape(text: str) -> bool:
