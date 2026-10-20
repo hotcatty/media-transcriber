@@ -383,6 +383,11 @@ const LOGIN_PARSE_HINT = "需要登录后再试";
 const LOGIN_NEED_TIP = "读取本机浏览器里已有的登录状态。";
 const LOGIN_CLOUD_TIP = "只用于这次解析，不会保存。";
 const CHARGE_NEED_LOGIN_HINT = "充电视频，请读取已充电账号";
+const CHARGE_STILL_HINT = "当前账号无法观看本充电专属";
+const TOKEN_RETRY_HINT = "已读取 token 并重新解析";
+
+let tokenPending = false;
+let tokenRetried = false;
 
 function asNeedsLogin(task) {
   const steps = Array.isArray(task.steps) ? task.steps.map((s) => (
@@ -401,11 +406,20 @@ function asNeedsLogin(task) {
 let toastTimer = null;
 const toastedKeys = new Set();
 
+function chargeStillLocked(hint) {
+  return /仍下不了|仍无法下载|无法观看本充电专属/.test(String(hint || ""));
+}
+
+function rememberCookieRead(data) {
+  const login = data && data.login;
+  tokenPending = !!(login && login.found);
+}
+
 function showToast(text, onceKey) {
   const el = $("toast");
   if (!el) return;
   const incoming = String(text || "").trim();
-  if (loginRequiredMsg(incoming)) return;
+  if (!/^读到了|^没读到/.test(incoming) && loginRequiredMsg(incoming)) return;
   const alreadyUi = /[\u4e00-\u9fff]/.test(incoming);
   const msg = alreadyUi ? incoming : humanizeError(incoming || "出了点问题，请稍后再试");
   if (onceKey) {
@@ -510,6 +524,8 @@ function resetToIdle() {
   stopSSE();
   currentTaskId = null;
   currentTask = null;
+  tokenPending = false;
+  tokenRetried = false;
   autoOpenedId = null;
   jobCollapsed = false;
   remainFloor = { id: null, value: null };
@@ -679,15 +695,23 @@ function renderJob(task) {
     const steps = Array.isArray(task.steps) ? task.steps : [];
     body = `<ul class="steps">${steps.map((s) => {
       let extra = "";
-      if (s.state === "needs_login") {
+      const showToken = tokenRetried && s.id === "parse" && (s.state === "done" || s.state === "current");
+      if (showToken) {
+        extra = `<span class="step-hint">${escapeHtml(TOKEN_RETRY_HINT)}</span>`;
+      } else if (s.state === "needs_login") {
         const charged = s.id === "download" || /充电/.test(s.hint || "");
         const hint = s.hint || (charged ? CHARGE_NEED_LOGIN_HINT : LOGIN_PARSE_HINT);
-        extra = `<div class="step-login">
+        if (chargeStillLocked(hint)) {
+          extra = `<span class="step-hint">${escapeHtml(CHARGE_STILL_HINT)}</span>`;
+        } else {
+          extra = `<div class="step-login">
           <span class="need">${escapeHtml(hint)}</span>
           <button type="button" class="link" data-open-login="1">读取登录状态</button>
         </div>`;
+        }
       } else if (s.state === "failed") {
-        const reason = s.hint || task.error || task.message || "";
+        const rawReason = s.hint || task.error || task.message || "";
+        const reason = chargeStillLocked(rawReason) ? CHARGE_STILL_HINT : rawReason;
         extra = reason ? `<span class="step-hint">${escapeHtml(reason)}</span>` : "";
       } else if (s.action === "view_audio") {
         extra = `<span class="step-extra">
@@ -715,7 +739,8 @@ function renderJob(task) {
           extra = `<span class="step-extra"><span class="step-hint">${escapeHtml(countdown)}</span></span>`;
         }
       } else if (s.state === "done" && s.hint) {
-        extra = `<span class="step-hint">${escapeHtml(s.hint)}</span>`;
+        const hint = chargeStillLocked(s.hint) ? CHARGE_STILL_HINT : s.hint;
+        extra = `<span class="step-hint">${escapeHtml(hint)}</span>`;
       }
       const tight = s.action === "view_audio";
       const meta = extra && tight ? " has-meta" : "";
@@ -733,6 +758,10 @@ function renderJob(task) {
 function applyTask(task, opts) {
   if (!task || task.type === "heartbeat") return;
   const fromHistory = !!(opts && opts.fromHistory);
+  if (fromHistory) {
+    tokenPending = false;
+    tokenRetried = false;
+  }
   currentTask = task;
   currentTaskId = task.id || currentTaskId;
   syncLoginSite(task);
@@ -836,6 +865,8 @@ async function submitUrl(url) {
   }
   jobCollapsed = false;
   autoOpenedId = null;
+  tokenPending = false;
+  tokenRetried = false;
   setBusy(true);
   opNote("submit", { host: safeUrl(url), service: window.MT_API ? "remote" : "same-origin" });
   try {
@@ -921,20 +952,83 @@ function retryReadLogin() {
   opNote("cookies.retry", {});
 }
 
+function cookieKeyName(site) {
+  return ({
+    bilibili: "SESSDATA",
+    youtube: "LOGIN_INFO",
+    xiaohongshu: "web_session",
+    douyin: "sessionid",
+  }[site] || "SESSDATA");
+}
+
+function showCloudLoginPane() {
+  return !isLocalHelper();
+}
+
+function loginStepLines() {
+  if (loginSite === "bilibili") {
+    return [
+      "打开哔哩哔哩，确认已登录",
+      "页面空白处右键点击「检查」",
+      "顶部点击 Application（基本都是英文）",
+      "左侧点击 Cookies，再点 bilibili",
+      "找到 SESSDATA，复制对应的 Value",
+    ];
+  }
+  const key = cookieKeyName(loginSite);
+  const host = String(loginHost || "").replace(/^www\./, "");
+  return [
+    `打开${siteLabel()}，确认已登录`,
+    "页面空白处右键点击「检查」",
+    "顶部点击 Application（基本都是英文）",
+    `左侧点击 Cookies，再点 ${host}`,
+    `找到 ${key}，复制对应的 Value`,
+  ];
+}
+
+function paintLoginSteps() {
+  const list = $("loginSteps");
+  if (list) {
+    list.innerHTML = loginStepLines().map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+  }
+  const shot = $("cookieShot");
+  if (shot) shot.hidden = loginSite !== "bilibili";
+}
+
+function cookieAiPrompt() {
+  const key = cookieKeyName(loginSite);
+  const chromeLine = loginSite === "bilibili"
+    ? "Chrome：~/Library/Application Support/Google/Chrome 下的 Cookies（SQLite）。多个配置时，用已经登录 B 站的那个。"
+    : `Chrome：~/Library/Application Support/Google/Chrome 下的 Cookies（SQLite）。多个配置时，用已经登录 ${loginHost} 的那个。`;
+  return [
+    `我这台 Mac 的 Chrome 或 Safari 已经登录 ${loginHost}。`,
+    `从本机浏览器的 Cookie 库读取 ${key}，不要让我打开开发者工具。`,
+    chromeLine,
+    "Safari：~/Library/Cookies/Cookies.binarycookies。",
+    `只回复一行：${key}=<值>`,
+    "不要上传。不要打印别的 Cookie。",
+  ].join("\n");
+}
+
+async function copyCookieAiPrompt() {
+  try {
+    await writeClipboard(cookieAiPrompt());
+    showToast("已复制，贴进电脑上的 Agent");
+    opNote("cookies.ai_prompt", { site: loginSite });
+  } catch (_) {
+    showToast("复制失败，请稍后再试");
+  }
+}
+
 function paintLoginMode() {
-  const local = isLocalHelper();
-  if ($("loginLocalPane")) $("loginLocalPane").hidden = !local;
-  if ($("loginCloudPane")) $("loginCloudPane").hidden = local;
+  const cloud = showCloudLoginPane();
+  document.documentElement.classList.toggle("mt-cloud-login", cloud);
+  if ($("loginLocalPane")) $("loginLocalPane").hidden = cloud;
+  if ($("loginCloudPane")) $("loginCloudPane").hidden = !cloud;
   if ($("loginNeedTip")) {
-    $("loginNeedTip").textContent = local ? LOGIN_NEED_TIP : LOGIN_CLOUD_TIP;
+    $("loginNeedTip").textContent = cloud ? LOGIN_CLOUD_TIP : LOGIN_NEED_TIP;
   }
-  const names = { bilibili: "SESSDATA", youtube: "LOGIN_INFO", xiaohongshu: "web_session", douyin: "sessionid" };
-  const key = names[loginSite] || "SESSDATA";
-  if ($("loginCloudHint")) {
-    $("loginCloudHint").textContent = loginSite === "bilibili"
-      ? `打开 ${loginHost} 并登录，F12 → Network → 点开任意请求 → Cookie，整段贴进来`
-      : `打开 ${loginHost} 并登录，F12 → Cookies，把 ${key} 贴进来`;
-  }
+  if (cloud) paintLoginSteps();
   const paste = $("cookiePaste");
   if (paste) paste.removeAttribute("placeholder");
 }
@@ -974,9 +1068,13 @@ async function loadBrowsers() {
 async function continueAfterCookies() {
   closeOverlay("loginOverlay");
   if (!currentTaskId) {
-    showToast("已读取登录状态，请再点一次转录");
+    if (!tokenPending) showToast("没读到 SESSDATA");
+    tokenPending = false;
     return;
   }
+  if (tokenPending) tokenRetried = true;
+  tokenPending = false;
+  if (tokenRetried && currentTask) renderJob(currentTask);
   const r = await mtFetch(`/api/tasks/${currentTaskId}/resume`, { method: "POST" });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -1009,10 +1107,12 @@ async function uploadCookies() {
     const data = await resp.json().catch(() => ({}));
     const msg = detailText(data, "读取失败");
     if (!resp.ok) {
+      rememberCookieRead({ login: { name: cookieKeyName(loginSite), found: false, length: 0 } });
       showReadFail(msg);
       return;
     }
-    opNote("cookies.ok", { site: loginSite, via: "upload" });
+    rememberCookieRead(data);
+    opNote("cookies.ok", { site: loginSite, via: "upload", found: !!(data.login && data.login.found), length: data.login ? data.login.length : 0 });
     await continueAfterCookies();
   } catch (_) {
     showReadFail("上传失败，请稍后再试");
@@ -1036,10 +1136,12 @@ async function importCookies() {
     const data = await resp.json().catch(() => ({}));
     const msg = detailText(data, "读取失败");
     if (!resp.ok) {
+      rememberCookieRead({ login: { name: cookieKeyName(loginSite), found: false, length: 0 } });
       showReadFail(msg);
       return;
     }
-    opNote("cookies.ok", { browser, site: loginSite });
+    rememberCookieRead(data);
+    opNote("cookies.ok", { browser, site: loginSite, found: !!(data.login && data.login.found), length: data.login ? data.login.length : 0 });
     await continueAfterCookies();
   } catch (_) {
     showReadFail("读取失败，请确认本机服务还在运行");
@@ -1639,6 +1741,18 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   $("importCookieBtn").onclick = importCookies;
   if ($("uploadCookieBtn")) $("uploadCookieBtn").onclick = uploadCookies;
+  if ($("copyCookieAiBtn")) $("copyCookieAiBtn").onclick = copyCookieAiPrompt;
+  if ($("cookieShot")) {
+    $("cookieShot").onclick = () => {
+      const zoom = $("cookieZoom");
+      if (zoom) zoom.hidden = false;
+    };
+  }
+  if ($("cookieZoom")) {
+    $("cookieZoom").onclick = () => {
+      $("cookieZoom").hidden = true;
+    };
+  }
 
   $("copyBtn").onclick = copyText;
   $("copyAiBtn").onclick = copyForAi;

@@ -256,7 +256,7 @@ LOGIN_PARSE_HINT = "需要登录后再试"
 INVALID_LINK_HINT = "链接无效，请重新填写"
 TEMPORARY_PARSE_HINT = "暂时无法解析，请稍后重试"
 DOWNLOAD_FAIL_HINT = "暂时无法下载音频，请稍后重试"
-CHARGE_VIDEO_HINT = "充电视频，当前账号仍无法下载"
+CHARGE_VIDEO_HINT = "当前账号无法观看本充电专属"
 CHARGE_NEED_LOGIN_HINT = "充电视频，请读取已充电账号"
 NO_MEDIA_HINT = "这篇笔记没有可转录的视频"
 APPLE_EPISODE_HINT = "请打开某一集，再粘贴这一集的苹果播客链接"
@@ -366,6 +366,14 @@ def is_charge_need_login(text: str) -> bool:
     return "充电视频" in raw and ("登录" in raw or "充电账号" in raw)
 
 
+def is_charge_blocked(text: str) -> bool:
+    """Cookie was used, and this account still cannot download the charge video."""
+    raw = strip_ansi(text or "")
+    if CHARGE_VIDEO_HINT in raw or "无法观看本充电专属" in raw:
+        return True
+    return any(k in raw for k in ("仍无法下载", "仍下不了", "当前账号仍"))
+
+
 def is_charge_gated(text: str) -> bool:
     raw = strip_ansi(text or "")
     if CHARGE_VIDEO_HINT in raw or "充电视频" in raw or "充电专属" in raw:
@@ -385,6 +393,8 @@ def is_charge_gated(text: str) -> bool:
 
 def parse_fail_hint(source: str, source_type: str, error: str, status: str = "") -> str:
     """Independent parse-fail copy: invalid link, needs login, or temporary."""
+    if is_charge_blocked(error):
+        return CHARGE_VIDEO_HINT
     if is_charge_need_login(error) or (status == "needs_login" and is_charge_gated(error)):
         return CHARGE_NEED_LOGIN_HINT
     if status == "needs_login" or is_login_required(error):
@@ -406,6 +416,8 @@ def fail_hint_for_task(
     """Copy for the failed step: parse vs download stay independent."""
     st = stage or ""
     low = (error or "").lower()
+    if is_charge_blocked(error):
+        return CHARGE_VIDEO_HINT
     if is_charge_need_login(error) or (status == "needs_login" and is_charge_gated(error)):
         return CHARGE_NEED_LOGIN_HINT
     if is_charge_gated(error):

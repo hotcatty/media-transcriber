@@ -219,18 +219,38 @@ def build_netscape_text(text: str, site: str = "bilibili") -> str:
     raw = (text or "").replace("\r\n", "\n").strip()
     if len(raw) > 256_000:
         raise CookieImportError("内容太大")
+    meta = site_info(site)
+    primary = _PRIMARY_COOKIE.get(meta["id"], "SESSDATA")
     if not _looks_like_netscape(raw):
         raw = _as_netscape(raw, site)
-        if not raw:
-            raise CookieImportError("请贴进来")
-    meta = site_info(site)
-    if not _cookie_text_has_login(raw, meta):
-        raise CookieImportError(
-            f"没有 {meta['label']} 的登录状态。"
-            f"请打开 {meta['host']} 登录后再贴一次"
-        )
+    if not raw or not _cookie_text_has_login(raw, meta):
+        raise CookieImportError(f"没读到 {primary}")
     raw = _refresh_session_expiry(raw)
     return raw if raw.endswith("\n") else raw + "\n"
+
+
+def login_report(text: str, site: str = "bilibili") -> dict:
+    """Primary login-cookie name and length. Never includes the value."""
+    meta = site_info(site)
+    primary = _PRIMARY_COOKIE.get(meta["id"], "SESSDATA")
+    netscape = text or ""
+    if netscape and not _looks_like_netscape(netscape):
+        netscape = _as_netscape(netscape, site)
+    length = 0
+    for line in (netscape or "").splitlines():
+        raw = line[len("#HttpOnly_"):] if line.startswith("#HttpOnly_") else line
+        if not raw or raw.startswith("#"):
+            continue
+        parts = raw.split("\t")
+        if len(parts) < 7:
+            continue
+        name, value = parts[5], parts[6]
+        if name == primary and value:
+            length = len(value)
+            break
+    found = length > 0
+    message = f"读到了 {primary}（{length} 字符）" if found else f"没读到 {primary}"
+    return {"name": primary, "found": found, "length": length, "message": message}
 
 
 def save_netscape_text(text: str, site: str = "bilibili") -> dict:
@@ -258,9 +278,23 @@ def _netscape_line(domain: str, name: str, value: str) -> str:
     return f"{domain}\tTRUE\t/\tTRUE\t{_session_expiry()}\t{name}\t{value}\n"
 
 
+def _cookie_header_from_curl(text: str) -> str:
+    raw = text or ""
+    header = re.search(
+        r"""(?:-H|--header)\s+['"]Cookie:\s*([^'"]+)['"]""", raw, re.I
+    )
+    if header:
+        return header.group(1).strip()
+    cookie = re.search(r"""(?:-b|--cookie)\s+['"]([^'"]+)['"]""", raw, re.I)
+    if cookie:
+        return cookie.group(1).strip()
+    return ""
+
+
 def _as_netscape(text: str, site: str) -> str:
     meta = site_info(site)
     raw = (text or "").strip().strip('"').strip("'")
+    raw = _cookie_header_from_curl(raw) or raw
     if raw.lower().startswith("cookie:"):
         raw = raw.split(":", 1)[1].strip()
     wanted = set(meta["cookie_names"])
@@ -272,10 +306,18 @@ def _as_netscape(text: str, site: str) -> str:
         if name in wanted and value:
             found[name] = value
     if not found:
+        skip = {"name", "value", "domain", "path", "expires", "size"}
         for line in raw.splitlines():
-            parts = re.split(r"[\t ]+", line.strip(), maxsplit=1)
-            if len(parts) == 2 and parts[0] in wanted and parts[1].strip():
-                found[parts[0]] = parts[1].strip()
+            cells = [c.strip() for c in re.split(r"[\t]+", line.strip()) if c.strip()]
+            if len(cells) < 2:
+                cells = [c.strip() for c in re.split(r"[ ]{2,}", line.strip()) if c.strip()]
+            if len(cells) < 2:
+                continue
+            name, value = cells[0], cells[1]
+            if name.lower() in skip or value.lower() in skip:
+                continue
+            if name in wanted and value:
+                found[name] = value
     if not found and "\n" not in raw and "=" not in raw:
         if re.fullmatch(r"[A-Za-z0-9_\-%*.,]{8,}", raw):
             found[primary] = raw

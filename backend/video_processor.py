@@ -2,6 +2,7 @@ import os
 import re
 import json
 import shutil
+import tempfile
 import time
 import uuid
 import asyncio
@@ -15,6 +16,7 @@ from typing import Callable, List, Optional, Tuple
 
 import audio as audio_utils
 import config
+import cookie_import
 from engines import Segment
 from text_utils import (
     CHARGE_NEED_LOGIN_HINT,
@@ -90,6 +92,7 @@ class VideoProcessor:
         }
         self.ydl_opts = opts
         self.runtime_cookiefile: Optional[str] = None
+        self._cookie_temps: list[str] = []
         if config.PUBLIC_WEB:
             logger.info("公网版不落盘 Cookie，解析时使用当前会话的临时登录状态")
         elif Path(self.COOKIE_FILE).exists():
@@ -126,12 +129,54 @@ class VideoProcessor:
         path = Path(self.COOKIE_FILE)
         return path if path.is_file() else None
 
+    def bilibili_login_report(self) -> dict:
+        path = self._cookie_path()
+        if path is None:
+            return cookie_import.login_report("", "bilibili")
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return cookie_import.login_report("", "bilibili")
+        return cookie_import.login_report(text, "bilibili")
+
+    def discard_cookie_temps(self) -> None:
+        while self._cookie_temps:
+            tmp = self._cookie_temps.pop()
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def _ytdlp_cookiefile(self) -> Optional[str]:
+        """Cookie file yt-dlp will actually send. Expiry 0 is treated as already expired."""
+        path = self._cookie_path()
+        if path is None:
+            return None
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return str(path)
+        refreshed = cookie_import._refresh_session_expiry(text)
+        if refreshed == text:
+            return str(path)
+        fd, tmp = tempfile.mkstemp(prefix="mt-ck-", suffix=".txt")
+        try:
+            os.write(fd, refreshed.encode("utf-8"))
+        finally:
+            os.close(fd)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        self._cookie_temps.append(tmp)
+        return tmp
+
     def _ydl_opts(self, url: str, extra: dict) -> dict:
         opts = dict(extra)
         opts["http_headers"] = self._headers_for(url)
-        cookie_path = self._cookie_path()
-        if cookie_path:
-            opts["cookiefile"] = str(cookie_path)
+        cookie_file = self._ytdlp_cookiefile()
+        if cookie_file:
+            opts["cookiefile"] = cookie_file
         else:
             opts.pop("cookiefile", None)
         u = (url or "").lower()
@@ -1121,7 +1166,7 @@ class VideoProcessor:
             if not gated:
                 gated = await asyncio.to_thread(self._bilibili_is_charge, url)
             if gated:
-                if self._cookie_path() is not None:
+                if self.bilibili_login_report().get("found"):
                     raise Exception(CHARGE_VIDEO_HINT)
                 raise Exception(CHARGE_NEED_LOGIN_HINT)
             raise Exception(f"下载视频失败: {clean_err}")

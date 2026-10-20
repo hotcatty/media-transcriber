@@ -19,8 +19,8 @@
   </script>
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/ui.css?v=cloud31">
-  <link rel="stylesheet" href="/static/style.css?v=cloud31">
+  <link rel="stylesheet" href="/static/ui.css?v=cloud34">
+  <link rel="stylesheet" href="/static/style.css?v=cloud39">
 </head>
 <body>
   <canvas id="sky" class="sky" aria-hidden="true"></canvas>
@@ -75,10 +75,22 @@
           <button type="button" class="btn btn--solid" id="importCookieBtn">点击读取</button>
         </div>
       </div>
-      <div id="loginCloudPane">
-        <p class="login-hint" id="loginCloudHint">打开 bilibili.com 并登录，F12 → Network → 点开任意请求 → Cookie，整段贴进来</p>
+      <div id="loginCloudPane" hidden>
+        <ol class="login-steps" id="loginSteps">
+          <li>打开哔哩哔哩，确认已登录</li>
+          <li>页面空白处右键点击「检查」</li>
+          <li>顶部点击 Application（基本都是英文）</li>
+          <li>左侧点击 Cookies，再点 bilibili</li>
+          <li>找到 SESSDATA，复制对应的 Value</li>
+        </ol>
+        <button type="button" class="cookie-shot" id="cookieShot" aria-label="放大截图">
+          <img src="/static/cookie-bilibili.png?v=cloud39" alt="Application、Cookies、SESSDATA" width="1024" height="612">
+        </button>
         <textarea id="cookiePaste" class="cookie-paste" rows="3"></textarea>
-        <button type="button" class="btn btn--solid" id="uploadCookieBtn">读取并继续</button>
+        <div class="login-cloud-actions">
+          <button type="button" class="btn btn--solid" id="uploadCookieBtn">读取并继续</button>
+        </div>
+        <button type="button" class="btn btn--solid" id="copyCookieAiBtn">复制给电脑上的 Agent</button>
         <input type="file" id="cookieFile" accept=".txt,text/plain" hidden>
       </div>
     </div>
@@ -242,10 +254,14 @@
 
   <div class="toast" id="toast" hidden role="status"></div>
 
+  <div class="cookie-zoom" id="cookieZoom" hidden>
+    <img src="/static/cookie-bilibili.png?v=cloud39" alt="Application、Cookies、SESSDATA" width="1024" height="612">
+  </div>
+
   <script src="/static/config.js?v=cloud19"></script>
   <script src="/static/ui.js?v=apple-pod1"></script>
   <script src="/static/galaxy.js?v=cloud22" defer></script>
-  <script src="/static/app.js?v=cloud31"></script>
+  <script src="/static/app.js?v=cloud39"></script>
   <script>
     (function () {
       var h = (location.hostname || "").toLowerCase();

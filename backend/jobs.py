@@ -45,6 +45,7 @@ from text_utils import (
     format_slash_when,
     friendly_error,
     humanize_duration,
+    is_charge_blocked,
     is_charge_gated,
     is_charge_need_login,
     is_login_required,
@@ -208,11 +209,13 @@ def pipeline_steps(task: Task) -> list:
             if reason:
                 item["hint"] = reason
         elif state == "needs_login":
-            item["hint"] = (
-                CHARGE_NEED_LOGIN_HINT
-                if is_charge_gated(task.error or task.message or "")
-                else LOGIN_PARSE_HINT
-            )
+            raw_err = task.error or task.message or ""
+            if is_charge_blocked(raw_err):
+                item["hint"] = CHARGE_VIDEO_HINT
+            elif is_charge_gated(raw_err):
+                item["hint"] = CHARGE_NEED_LOGIN_HINT
+            else:
+                item["hint"] = LOGIN_PARSE_HINT
         elif sid == "model" and state == "current":
             d = task.detail or {}
             item["size"] = _fmt_model_size(
@@ -668,6 +671,7 @@ class JobManager:
                     await self._execute(task_id, cancel)
                 finally:
                     self.video.runtime_cookiefile = None
+                    self.video.discard_cookie_temps()
         except Cancelled:
             self.store.update(
                 task_id, status=CANCELLED, stage="cancelled",
@@ -685,7 +689,13 @@ class JobManager:
             if fail_stage in ("queued", "preparing", "failed"):
                 fail_stage = "parse"
             auth = is_login_required(raw) or is_login_required(err)
-            if is_charge_need_login(raw) or is_charge_need_login(err):
+            if is_charge_blocked(raw) or is_charge_blocked(err):
+                err = CHARGE_VIDEO_HINT
+                self.store.update(
+                    task_id, status=FAILED, stage="downloading",
+                    error=err, message=err, finished_at=_now(), flush=True,
+                )
+            elif is_charge_need_login(raw) or is_charge_need_login(err):
                 err = CHARGE_NEED_LOGIN_HINT
                 self.store.update(
                     task_id, status=NEEDS_LOGIN, stage="downloading",
@@ -1047,10 +1057,13 @@ class JobManager:
                     )
                 else:
                     if charge:
-                        err = (
-                            CHARGE_VIDEO_HINT
-                            if self.video.runtime_cookiefile
-                            else CHARGE_NEED_LOGIN_HINT
+                        report = self.video.bilibili_login_report()
+                        has_login = bool(report.get("found"))
+                        err = CHARGE_VIDEO_HINT if has_login else CHARGE_NEED_LOGIN_HINT
+                        logger.info(
+                            "充电专属 has_login=%s sessdata_len=%s",
+                            int(has_login),
+                            int(report.get("length") or 0),
                         )
                         await self._note(
                             task_id, 16, "downloading", err,

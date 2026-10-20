@@ -359,6 +359,22 @@ async def list_browsers(request: Request):
     return {"browsers": cookie_import.list_installed_browsers()}
 
 
+def _login_read_payload(text: str, site: str, meta: dict) -> dict:
+    """What was parsed: cookie name and length only, never the value."""
+    report = cookie_import.login_report(text, site)
+    logger.info(
+        "已读取登录状态 site=%s name=%s found=%s len=%s",
+        meta.get("id"),
+        report.get("name"),
+        int(bool(report.get("found"))),
+        int(report.get("length") or 0),
+    )
+    message = report["message"]
+    if report.get("found"):
+        message = f"{message}，已带上登录状态重试"
+    return {"ok": True, "message": message, "site": meta.get("id"), "login": report}
+
+
 @app.post("/api/upload-cookies")
 async def upload_cookies(
     request: Request,
@@ -370,37 +386,35 @@ async def upload_cookies(
     if file is not None and (file.filename or "").strip():
         data = await file.read()
         raw = data.decode("utf-8", "replace")
+    try:
+        text = cookie_import.build_netscape_text(raw, site)
+    except cookie_import.CookieImportError as e:
+        raise HTTPException(400, str(e)) from None
+    except Exception:
+        logger.exception("读取登录状态失败")
+        raise HTTPException(400, "上传失败，请稍后再试") from None
+    meta = cookie_import.site_info(site)
     if _isolate_visitors(request):
         sid = getattr(request.state, "session_id", "") or ""
         if not sid:
             raise HTTPException(400, "会话无效，请刷新页面后再试")
         try:
-            text = cookie_import.build_netscape_text(raw, site)
             session_cookies.put(sid, text)
-        except cookie_import.CookieImportError as e:
-            raise HTTPException(400, str(e)) from None
         except ValueError:
             raise HTTPException(400, "内容太大") from None
         except Exception:
             logger.exception("读取会话登录状态失败")
             raise HTTPException(400, "上传失败，请稍后再试") from None
-        meta = cookie_import.site_info(site)
-        logger.info("已读取会话登录状态 site=%s", meta.get("id"))
-        return {
-            "ok": True,
-            "message": "已读取登录状态",
-            "site": meta.get("id"),
-        }
-    try:
-        result = cookie_import.save_netscape_text(raw, site)
-    except cookie_import.CookieImportError as e:
-        raise HTTPException(400, str(e)) from None
-    except Exception:
-        logger.exception("上传登录状态失败")
-        raise HTTPException(400, "上传失败，请稍后再试") from None
-    jobs.reload_cookies()
-    logger.info("已读取上传的 %s 登录状态", result.get("site"))
-    return {"ok": True, "message": result["message"], "site": result.get("site")}
+    else:
+        try:
+            cookie_import.save_netscape_text(text, site)
+        except cookie_import.CookieImportError as e:
+            raise HTTPException(400, str(e)) from None
+        except Exception:
+            logger.exception("上传登录状态失败")
+            raise HTTPException(400, "上传失败，请稍后再试") from None
+        jobs.reload_cookies()
+    return _login_read_payload(text, site, meta)
 
 
 @app.post("/api/import-cookies")
@@ -421,8 +435,13 @@ async def import_cookies(
         logger.exception("从浏览器读取登录状态失败")
         raise HTTPException(400, "读取失败，请稍后再试") from None
     jobs.reload_cookies()
+    stored = ""
+    try:
+        stored = config.COOKIE_FILE.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        stored = ""
     logger.info("从 %s 读取 %s 登录状态成功", result.get("browser"), result.get("site"))
-    return {"ok": True, "message": result["message"], "site": result.get("site")}
+    return _login_read_payload(stored, site, cookie_import.site_info(site))
 
 
 @app.post("/api/transcribe")

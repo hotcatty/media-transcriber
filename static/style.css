@@ -463,6 +463,57 @@ img.step-ico.is-spin {
   line-height: 1.4;
   color: var(--ink-60);
 }
+.login-steps {
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #000;
+}
+.login-steps li + li { margin-top: 8px; }
+.cookie-shot {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.cookie-shot[hidden] { display: none !important; }
+.cookie-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.cookie-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: zoom-out;
+}
+.cookie-zoom[hidden] { display: none !important; }
+.cookie-zoom img {
+  width: min(1024px, calc(100vw - 48px));
+  height: auto;
+  max-height: calc(100vh - 48px);
+  object-fit: contain;
+  background: #fff;
+  border-radius: 8px;
+}
+.login-cloud-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 #sheetTitle {
   font-size: 18px;
   font-weight: 500;
@@ -549,7 +600,9 @@ img.step-ico.is-spin {
   color: var(--ink);
   resize: vertical;
 }
-html:not(.mt-local) #loginLocalPane {
+html:not(.mt-local) #loginLocalPane,
+html.mt-local #loginCloudPane,
+html.mt-desktop #loginCloudPane {
   display: none !important;
 }
 html:not(.mt-local) #loginCloudPane {
@@ -557,11 +610,12 @@ html:not(.mt-local) #loginCloudPane {
   flex-direction: column;
   gap: 16px;
 }
-html.mt-local #loginCloudPane {
-  display: none !important;
+#loginOverlay .modal {
+  gap: 20px;
+  overflow-y: auto;
 }
-#loginOverlay .modal { gap: 20px; }
 #loginCloudPane .btn { align-self: flex-start; }
+#loginCloudPane .login-cloud-actions { align-self: flex-start; }
 .login-row {
   display: flex;
   align-items: flex-end;

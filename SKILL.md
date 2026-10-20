@@ -1,5 +1,6 @@
 ---
 name: media-transcriber
+version: 1.3.0
 description: 把视频/音频链接或本地文件转成简体文字稿并做内容分析。适用于小宇宙、B 站、小红书、抖音、微信、YouTube、苹果播客，以及「把这个视频转成文字」「这条链接讲了什么」「拆解这期播客」。全本地 Whisper，不上传。Use when the user pastes a media URL, asks to transcribe, summarize, or analyze a video/podcast/audio file.
 ---
 
@@ -7,7 +8,12 @@ description: 把视频/音频链接或本地文件转成简体文字稿并做内
 
 `$SKILL` = 本仓库根目录（已打开这个项目时），或 clone 到 `~/.claude/skills/media-transcriber/` / `~/.codex/skills/media-transcriber/` 的那份。仓库已经在的话，先 `git pull`。
 
-全程本地跑：yt-dlp 拉音频，本机 Whisper Turbo 听写。不要把音视频或 Cookie 发到云端。
+```bash
+git clone https://github.com/hotcatty/media-transcriber.git ~/.claude/skills/media-transcriber
+# Codex 则 clone 到 ~/.codex/skills/media-transcriber
+```
+
+全程本地跑：yt-dlp 拉音频，本机 Whisper Turbo 听写。不要把音视频或 Cookie 发到云端。只要独立窗口：GitHub Releases 下 v1.3.0，Mac / Windows 各一个 zip。线上体验：http://maoting.online
 
 ## 用法
 
@@ -40,7 +46,7 @@ bash $SKILL/scripts/run.sh "<链接或本地文件>" --out "<目录>"
 1. 用户丢链接或文件、说「转成文字 / 讲了什么 / 拆解一下」时，直接跑上面的命令，不要先问一堆参数。
 2. 读 `transcript.txt`，**基于文稿给结论**：先一句话，再要点；不要把整篇原文糊回去，路径留给要原文的人。
 3. 文稿为空或短到不像话（脚本会 `WARN`）：当作没口播/纯字卡，如实说，不要编。
-4. 需要登录或充电视频：把脚本的中文提示原样告诉用户。让他们用本地桌面版/网页版读取登录状态（会写到本机 `cookies.txt`）后再跑脚本，不要猜测内容。充电专属片必须是已经充过电的那个账号。
+4. 需要登录或 B 站充电专属：把脚本提示原样告诉用户，不要猜内容。必须是已经充过电的那个账号。桌面版 / Skill 在本机产品里读取登录状态，会写到 `cookies.txt` 后再重跑。线上 maoting.online 按页面步骤贴 Cookie：打开哔哩哔哩并登录，页面空白处右键「检查」，顶部点 Application，左侧 Cookies 里点 bilibili，复制 SESSDATA 的 Value。页面上有「复制给电脑上的 Agent」。只记在当次会话，不写 `cookies.txt`。
 5. 不要把下载的音频、Cookie、逐字稿提交进 git，除非用户明确要求。
 
 ## 平台
