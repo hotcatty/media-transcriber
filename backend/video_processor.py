@@ -9,6 +9,7 @@ import asyncio
 import subprocess
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qs, urljoin, urlparse
 import yt_dlp
 import logging
 from pathlib import Path
@@ -19,13 +20,17 @@ import config
 import cookie_import
 from engines import Segment
 from text_utils import (
+    BILI_RISK_HINT,
+    BILI_SHORT_LINK_HINT,
     CHARGE_NEED_LOGIN_HINT,
     CHARGE_VIDEO_HINT,
     LOGIN_PARSE_HINT,
     NO_MEDIA_HINT,
+    TEMPORARY_PARSE_HINT,
     WECHAT_HINT,
     YOUTUBE_DISABLED_HINT,
     YOUTUBE_UNREACHABLE_HINT,
+    bili_block_hint,
     extract_share_url,
     is_charge_gated,
     is_douyin_url,
@@ -37,6 +42,10 @@ from text_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _BiliBlocked(Exception):
+    """Bilibili answered HTTP 412. Internal only; callers map it to user copy."""
 
 
 class VideoProcessor:
@@ -93,6 +102,11 @@ class VideoProcessor:
         self.ydl_opts = opts
         self.runtime_cookiefile: Optional[str] = None
         self._cookie_temps: list[str] = []
+        self._guest_buvid3 = ""
+        self._guest_buvid4 = ""
+        self._guest_buvid_ready = False
+        self._prefer_guest_buvid = False
+        self._bili_input_short = False
         if config.PUBLIC_WEB:
             logger.info("公网版不落盘 Cookie，解析时使用当前会话的临时登录状态")
         elif Path(self.COOKIE_FILE).exists():
@@ -173,7 +187,12 @@ class VideoProcessor:
 
     def _ydl_opts(self, url: str, extra: dict) -> dict:
         opts = dict(extra)
-        opts["http_headers"] = self._headers_for(url)
+        headers = self._headers_for(url)
+        if self._is_bilibili(url):
+            visitor = self._bilibili_visitor_header()
+            if visitor:
+                headers["Cookie"] = visitor
+        opts["http_headers"] = headers
         cookie_file = self._ytdlp_cookiefile()
         if cookie_file:
             opts["cookiefile"] = cookie_file
@@ -234,6 +253,179 @@ class VideoProcessor:
             logger.info("短链跳转失败，沿用原地址: %s", _clean(str(e))[:200])
             return url
 
+    def _one_hop_location(self, url: str) -> Optional[str]:
+        """One redirect only. Following b23.tv all the way hits the video page and gets blocked."""
+
+        class _StopRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        headers = self._headers_for(url)
+        if self._is_bilibili(url):
+            cookie = self._bilibili_api_cookie()
+            if cookie:
+                headers["Cookie"] = cookie
+        opener = urllib.request.build_opener(_StopRedirect)
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with opener.open(req, timeout=12) as resp:
+                resp.read(1)
+            return None
+        except _BiliBlocked:
+            raise
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308):
+                loc = e.headers.get("Location") if e.headers else None
+                return (loc or "").strip() or None
+            if e.code == 412:
+                raise _BiliBlocked()
+            logger.info("短链跳转失败，沿用原地址: %s", _clean(str(e))[:200])
+            return None
+        except Exception as e:
+            logger.info("短链跳转失败，沿用原地址: %s", _clean(str(e))[:200])
+            return None
+
+    def _expand_b23_hops(self, url: str) -> str:
+        current = url
+        for _ in range(3):
+            if "b23.tv" not in (current or "").lower():
+                break
+            loc = self._one_hop_location(current)
+            if not loc:
+                break
+            nxt = urljoin(current, loc)
+            if nxt == current:
+                break
+            current = nxt
+        return current
+
+    def _expand_b23(self, url: str) -> str:
+        return self._with_bili_412_retry(lambda: self._expand_b23_hops(url))
+
+    def _expand_other_short(self, url: str) -> str:
+        def once() -> str:
+            current = url
+            for _ in range(3):
+                if self._bvid(current) or self._avid(current):
+                    break
+                low = (current or "").lower()
+                if "bilibili.com" not in low and "b23.tv" not in low:
+                    break
+                loc = self._one_hop_location(current)
+                if not loc:
+                    break
+                nxt = urljoin(current, loc)
+                if nxt == current:
+                    break
+                current = nxt
+            return current
+
+        return self._with_bili_412_retry(once)
+
+    def _with_bili_412_retry(self, fn: Callable[[], str]) -> str:
+        try:
+            return fn()
+        except _BiliBlocked:
+            logger.info("B站短链被拒绝，刷新访客标识后重试一次")
+            self._refresh_bilibili_visitor()
+            time.sleep(1.2)
+            try:
+                return fn()
+            except _BiliBlocked:
+                self._raise_bili_block("")
+
+    def _is_full_bilibili_video_url(self, url: str) -> bool:
+        """True only for https://www.bilibili.com/video/BV… or av…."""
+        raw = extract_share_url(url) or (url or "").strip()
+        if not raw:
+            return False
+        if not re.match(r"^https?://", raw, re.I):
+            raw = "https://" + raw.lstrip("/")
+        try:
+            parsed = urlparse(raw)
+        except Exception:
+            return False
+        host = (parsed.hostname or "").lower()
+        if host != "www.bilibili.com":
+            return False
+        path = parsed.path or ""
+        return re.search(r"^/video/(?:BV[0-9A-Za-z]+|av\d+)/?$", path, re.I) is not None
+
+    def _avid(self, url: str) -> Optional[str]:
+        m = re.search(r"/video/av(\d+)", str(url or ""), re.I)
+        return m.group(1) if m else None
+
+    def _bilibili_page_query(self, url: str) -> str:
+        try:
+            page = (parse_qs(urlparse(url).query).get("p") or [""])[0]
+        except Exception:
+            return ""
+        if str(page).isdigit() and str(page) != "1":
+            return str(page)
+        return ""
+
+    def _url_host(self, url: str) -> str:
+        try:
+            return (urlparse(str(url or "")).hostname or "").lower()
+        except Exception:
+            return ""
+
+    def _canonical_bilibili_video_url(self, url: str) -> str:
+        host = self._url_host(url)
+        if host == "b23.tv" or host.endswith(".b23.tv"):
+            return ""
+        page = self._bilibili_page_query(url)
+        bvid = self._bvid(url)
+        if bvid:
+            base = f"https://www.bilibili.com/video/{bvid}"
+        else:
+            avid = self._avid(url)
+            if not avid:
+                return ""
+            base = f"https://www.bilibili.com/video/av{avid}"
+        if page:
+            return f"{base}?p={page}"
+        return base
+
+    def _bili_block_message(self) -> str:
+        if self._bili_input_short:
+            return BILI_SHORT_LINK_HINT
+        return BILI_RISK_HINT
+
+    def _raise_bili_block(self, text: str) -> None:
+        raw = _clean(text or "")
+        if BILI_SHORT_LINK_HINT in raw:
+            raise Exception(BILI_SHORT_LINK_HINT)
+        if BILI_RISK_HINT in raw:
+            raise Exception(BILI_RISK_HINT)
+        raise Exception(self._bili_block_message())
+
+    def _is_bili_block_text(self, text: str) -> bool:
+        return bool(bili_block_hint(text))
+
+    def _prepare_bilibili_url(self, raw: str) -> str:
+        self._bili_input_short = not self._is_full_bilibili_video_url(raw)
+        current = raw
+        if "b23.tv" in (current or "").lower():
+            current = self._expand_b23(current)
+        elif self._bili_input_short and not (self._bvid(current) or self._avid(current)):
+            current = self._expand_other_short(current)
+        canon = self._canonical_bilibili_video_url(current)
+        if not canon and "b23.tv" not in (current or "").lower():
+            canon = self._canonical_bilibili_video_url(raw)
+        if not canon and (self._bvid(raw) or self._avid(raw)) and "b23.tv" in (raw or "").lower():
+            # Slug already carries the id; still expanded above. Use it if the hop had no Location.
+            page = self._bilibili_page_query(raw)
+            bvid = self._bvid(raw)
+            if bvid:
+                base = f"https://www.bilibili.com/video/{bvid}"
+                return f"{base}?p={page}" if page else base
+        if canon:
+            return canon
+        if self._bili_input_short:
+            raise Exception(TEMPORARY_PARSE_HINT)
+        return current or raw
+
     def prepare_url(self, url: str) -> str:
         raw = extract_share_url(url)
         if self._is_xiaohongshu(raw):
@@ -246,6 +438,8 @@ class VideoProcessor:
             return self._follow_redirect(raw)
         if self._is_weixin(raw) and "weixin.qq.com/sph/" in (raw or "").lower():
             return self._follow_redirect(raw)
+        if self._is_bilibili(raw):
+            return self._prepare_bilibili_url(raw)
         return raw
 
     def _cookie_header_for(self, domain_part: str) -> str:
@@ -459,33 +653,140 @@ class VideoProcessor:
                 return m.group(1)
         return None
 
-    def _bilibili_json(self, api_url: str) -> dict:
-        headers = self._headers_for("https://www.bilibili.com/")
+    def _cookie_pairs(self, cookie: str) -> list:
+        pairs = []
+        for part in (cookie or "").split(";"):
+            part = part.strip()
+            if not part or "=" not in part:
+                continue
+            name, value = part.split("=", 1)
+            name = name.strip()
+            value = value.strip()
+            if name and value:
+                pairs.append((name, value))
+        return pairs
+
+    def _has_cookie_name(self, cookie: str, name: str) -> bool:
+        want = (name or "").lower()
+        return any(n.lower() == want for n, _ in self._cookie_pairs(cookie))
+
+    def _strip_buvid(self, cookie: str) -> str:
+        kept = [
+            (n, v) for n, v in self._cookie_pairs(cookie)
+            if n.lower() not in ("buvid3", "buvid4")
+        ]
+        return "; ".join(f"{n}={v}" for n, v in kept)
+
+    def _ensure_guest_buvid(self) -> tuple:
+        """One visitor id for this processor. A later call reuses it."""
+        if self._guest_buvid_ready:
+            return self._guest_buvid3, self._guest_buvid4
+        b3 = ""
+        b4 = ""
+        try:
+            req = urllib.request.Request(
+                "https://api.bilibili.com/x/frontend/finger/spi",
+                headers=self._headers_for("https://www.bilibili.com/"),
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                payload = json.loads(resp.read().decode("utf-8", "replace"))
+            data = (payload or {}).get("data") or {}
+            b3 = str(data.get("b_3") or "").strip()
+            b4 = str(data.get("b_4") or "").strip()
+        except Exception as e:
+            logger.info("B站访客标识获取失败: %s", _clean(str(e))[:120])
+        self._guest_buvid3 = b3
+        self._guest_buvid4 = b4
+        self._guest_buvid_ready = True
+        return b3, b4
+
+    def _refresh_bilibili_visitor(self) -> None:
+        """Drop the cached visitor id so the next request mints one new pair."""
+        self._guest_buvid3 = ""
+        self._guest_buvid4 = ""
+        self._guest_buvid_ready = False
+        self._prefer_guest_buvid = True
+
+    def _bilibili_api_cookie(self) -> str:
         cookie = self._bilibili_cookie_header()
+        if self._prefer_guest_buvid:
+            cookie = self._strip_buvid(cookie)
+        elif self._has_cookie_name(cookie, "buvid3"):
+            return cookie
+        b3, b4 = self._ensure_guest_buvid()
+        extra = []
+        if b3 and not self._has_cookie_name(cookie, "buvid3"):
+            extra.append(f"buvid3={b3}")
+        if b4 and not self._has_cookie_name(cookie, "buvid4"):
+            extra.append(f"buvid4={b4}")
+        if not extra:
+            return cookie
         if cookie:
-            headers["Cookie"] = cookie
+            return cookie + "; " + "; ".join(extra)
+        return "; ".join(extra)
+
+    def _bilibili_visitor_header(self) -> str:
+        """buvid only. Login cookies stay in the cookie file and are not rewritten."""
+        login = self._bilibili_cookie_header()
+        if self._has_cookie_name(login, "buvid3") and not self._prefer_guest_buvid:
+            return ""
+        b3, b4 = self._ensure_guest_buvid()
+        parts = []
+        if b3:
+            parts.append(f"buvid3={b3}")
+        if b4:
+            parts.append(f"buvid4={b4}")
+        return "; ".join(parts)
+
+    def _bilibili_json(self, api_url: str) -> dict:
         last_err: Optional[Exception] = None
         for attempt in range(2):
+            headers = self._headers_for("https://www.bilibili.com/")
+            cookie = self._bilibili_api_cookie()
+            if cookie:
+                headers["Cookie"] = cookie
             try:
                 req = urllib.request.Request(api_url, headers=headers)
                 with urllib.request.urlopen(req, timeout=12) as resp:
                     payload = json.loads(resp.read().decode("utf-8", "replace"))
+                if not isinstance(payload, dict):
+                    payload = {}
                 code = int((payload or {}).get("code") or 0)
-                if code in (-412, 412, -403, -799) and attempt == 0:
-                    logger.info("B站接口风控 %s，稍后重试", code)
+                if code in (-412, 412):
+                    if attempt == 0:
+                        logger.info("B站接口拒绝访问，刷新访客标识后重试一次")
+                        self._refresh_bilibili_visitor()
+                        time.sleep(1.2)
+                        continue
+                    self._raise_bili_block("")
+                if code in (-403, -799) and attempt == 0:
+                    logger.info("B站接口返回 %s，稍后重试", code)
+                    self._guest_buvid3 = ""
+                    self._guest_buvid4 = ""
+                    self._guest_buvid_ready = False
                     time.sleep(1.2)
                     continue
                 return payload
             except urllib.error.HTTPError as e:
                 last_err = e
-                if e.code in (403, 412) and attempt == 0:
-                    logger.info("B站接口 HTTP %s，稍后重试", e.code)
+                if e.code == 412:
+                    if attempt == 0:
+                        logger.info("B站接口拒绝访问，刷新访客标识后重试一次")
+                        self._refresh_bilibili_visitor()
+                        time.sleep(1.2)
+                        continue
+                    self._raise_bili_block(str(e))
+                if e.code == 403 and attempt == 0:
+                    logger.info("B站接口 HTTP 403，稍后重试")
+                    self._guest_buvid3 = ""
+                    self._guest_buvid4 = ""
+                    self._guest_buvid_ready = False
                     time.sleep(1.2)
                     continue
                 raise
         if last_err:
             raise last_err
-        raise Exception("暂时无法解析")
+        raise Exception(TEMPORARY_PARSE_HINT)
 
     def _bilibili_view(self, bvid: str) -> dict:
         payload = self._bilibili_json(
@@ -587,17 +888,15 @@ class VideoProcessor:
         if self._is_429(err):
             return False
         low = str(err).lower()
+        if self._is_bili_block_text(low):
+            return False
         return any(
             k in low
             for k in (
                 "403",
-                "412",
                 "forbidden",
-                "precondition",
                 "not a bot",
                 "confirm you",
-                "风控",
-                "请求被拦截",
             )
         )
 
@@ -622,6 +921,18 @@ class VideoProcessor:
         try:
             return await asyncio.to_thread(fn)
         except Exception as e:
+            if self._is_bili_block_text(str(e)):
+                if BILI_SHORT_LINK_HINT in str(e) or BILI_RISK_HINT in str(e):
+                    raise
+                logger.info("B站拒绝访问，刷新访客标识后重试一次")
+                self._refresh_bilibili_visitor()
+                await asyncio.sleep(1.2)
+                try:
+                    return await asyncio.to_thread(fn)
+                except Exception as e2:
+                    if self._is_bili_block_text(str(e2)):
+                        self._raise_bili_block(str(e2))
+                    raise
             if not self._retryable(e):
                 raise
             logger.info("平台第一次拒绝访问，1.2 秒后重试一次")
@@ -750,14 +1061,15 @@ class VideoProcessor:
                     charge = self._bilibili_charge_locked(view)
                     logger.info("B站接口已解析: %s", video_title)
                 except Exception as e:
+                    if self._is_bili_block_text(str(e)):
+                        raise
                     logger.info("B站接口解析失败，回退网页: %s", _clean(str(e))[:200])
         try:
-            check_opts = self._ydl_opts(url, {
-                "quiet": True, "no_warnings": True, "noplaylist": True,
-            })
+            sub_opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
 
             def _extract():
-                with yt_dlp.YoutubeDL(check_opts) as ydl:
+                opts = self._ydl_opts(url, sub_opts)
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     return ydl.extract_info(url, False)
 
             info = await self._ydl_thread(_extract)
@@ -853,6 +1165,11 @@ class VideoProcessor:
                 raise Exception(LOGIN_PARSE_HINT)
             if self._is_weixin(url) and "unsupported url" in low:
                 raise Exception(WECHAT_HINT)
+            if self._is_bili_block_text(clean_err):
+                if video_title:
+                    logger.info("B站字幕被拒绝，改走音频下载")
+                    return None, video_title, None, video_duration, charge, page_meta
+                self._raise_bili_block(clean_err)
             logger.warning(f"字幕获取失败（将回退至音频下载）: {e}")
             return None, video_title, None, video_duration, charge, page_meta
         finally:
@@ -1090,11 +1407,13 @@ class VideoProcessor:
                         url, output_dir, unique_id, prefetched_title
                     )
                 except Exception as e:
+                    if self._is_bili_block_text(str(e)):
+                        raise
                     logger.warning("B站接口下载失败，回退 yt-dlp: %s", _clean(str(e))[:200])
             output_template = str(output_dir / f"audio_{unique_id}.%(ext)s")
 
-            ydl_opts = self._ydl_opts(url, self.ydl_opts.copy())
-            ydl_opts['outtmpl'] = output_template
+            base_opts = self.ydl_opts.copy()
+            base_opts['outtmpl'] = output_template
             if on_progress:
                 def _hook(d):
                     status = d.get("status")
@@ -1112,18 +1431,20 @@ class VideoProcessor:
                         })
                     elif status == "finished":
                         on_progress({"phase": "convert", "fraction": 0.95})
-                ydl_opts["progress_hooks"] = [_hook]
-                ydl_opts["quiet"] = True
-                ydl_opts["noprogress"] = True
+                base_opts["progress_hooks"] = [_hook]
+                base_opts["quiet"] = True
+                base_opts["noprogress"] = True
 
             logger.info(f"开始下载视频: {url}")
 
             def _extract():
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                opts = self._ydl_opts(url, base_opts)
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     return ydl.extract_info(url, False)
 
             def _download():
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                opts = self._ydl_opts(url, base_opts)
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.download([url])
 
             if prefetched_title:
@@ -1152,6 +1473,8 @@ class VideoProcessor:
 
         except Exception as e:
             clean_err = _clean(str(e))
+            if self._is_bili_block_text(clean_err):
+                self._raise_bili_block(clean_err)
             logger.error(f"下载视频失败: {clean_err}")
             low = clean_err.lower()
             if self._is_xiaohongshu(url) and "no video formats" in low:

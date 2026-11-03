@@ -258,6 +258,8 @@ TEMPORARY_PARSE_HINT = "暂时无法解析，请稍后重试"
 DOWNLOAD_FAIL_HINT = "暂时无法下载音频，请稍后重试"
 CHARGE_VIDEO_HINT = "当前账号无法观看本充电专属"
 CHARGE_NEED_LOGIN_HINT = "充电视频，请读取已充电账号"
+BILI_SHORT_LINK_HINT = "请粘贴完整视频网址，不要用短链"
+BILI_RISK_HINT = "B站暂时拒绝访问，请稍后再试"
 NO_MEDIA_HINT = "这篇笔记没有可转录的视频"
 APPLE_EPISODE_HINT = "请打开某一集，再粘贴这一集的苹果播客链接"
 YOUTUBE_UNREACHABLE_HINT = "这台服务器连不上 YouTube，暂时没法解析这条链接"
@@ -309,15 +311,36 @@ def host_allowed_on_public(url: str) -> bool:
     return any(host == h or host.endswith("." + h) for h in _PUBLIC_HOSTS)
 
 
+def bili_block_hint(text: str) -> str:
+    """User copy after Bilibili rejects the request. No status code, no 登录."""
+    raw = strip_ansi(text or "")
+    if BILI_SHORT_LINK_HINT in raw:
+        return BILI_SHORT_LINK_HINT
+    if BILI_RISK_HINT in raw:
+        return BILI_RISK_HINT
+    low = raw.lower()
+    if (
+        "412" in raw
+        or "precondition failed" in low
+        or "请求被拦截" in raw
+        or "风控" in raw
+    ):
+        return BILI_RISK_HINT
+    return ""
+
+
 def is_login_required(text: str) -> bool:
     raw = strip_ansi(text or "")
     # Charge-gated copy talks about 登录状态 but is not the parse-login bucket.
     if "充电视频" in raw:
         return False
+    # Risk-control copy is not a login prompt, including the short-link wording.
+    if bili_block_hint(raw):
+        return False
     # Old mixed copy is not a login signal.
     raw = raw.replace("可能需要登录", "")
     low = raw.lower().replace("’", "'").replace("‘", "'")
-    # B 站 412 / 风控、yt-dlp 随口提 --cookies，刷新后再试常常就能过，不能当成要登录。
+    # B 站风控、yt-dlp 随口提 --cookies，不能当成要登录。
     if "412" in raw or "precondition failed" in low:
         return False
     # 抖音要的是浏览器访客 Cookie，不一定已登录。
@@ -393,6 +416,9 @@ def is_charge_gated(text: str) -> bool:
 
 def parse_fail_hint(source: str, source_type: str, error: str, status: str = "") -> str:
     """Independent parse-fail copy: invalid link, needs login, or temporary."""
+    blocked = bili_block_hint(error)
+    if blocked:
+        return blocked
     if is_charge_blocked(error):
         return CHARGE_VIDEO_HINT
     if is_charge_need_login(error) or (status == "needs_login" and is_charge_gated(error)):
@@ -416,6 +442,9 @@ def fail_hint_for_task(
     """Copy for the failed step: parse vs download stay independent."""
     st = stage or ""
     low = (error or "").lower()
+    blocked = bili_block_hint(error)
+    if blocked:
+        return blocked
     if is_charge_blocked(error):
         return CHARGE_VIDEO_HINT
     if is_charge_need_login(error) or (status == "needs_login" and is_charge_gated(error)):
@@ -486,8 +515,9 @@ def friendly_error(text: str) -> str:
         return APPLE_EPISODE_HINT
     if WECHAT_HINT in raw:
         return WECHAT_HINT
-    if "412" in raw or "precondition failed" in low or "请求被拦截" in raw or "风控" in raw:
-        return TEMPORARY_PARSE_HINT
+    blocked = bili_block_hint(raw)
+    if blocked:
+        return blocked
     if is_charge_need_login(raw):
         return CHARGE_NEED_LOGIN_HINT
     if is_charge_gated(raw):
