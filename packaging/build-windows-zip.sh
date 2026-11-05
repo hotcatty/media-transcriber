@@ -15,6 +15,21 @@ mkdir -p "$APP/app" "$APP/bin"
 cp "$ROOT/packaging/windows/start.bat" "$APP/"
 cp "$ROOT/packaging/windows/launcher.ps1" "$APP/"
 cp "$ROOT/packaging/windows/app.ico" "$APP/"
+python3 - "$APP/start.bat" "$APP/launcher.ps1" <<'PY'
+import sys
+from pathlib import Path
+bat, ps1 = map(Path, sys.argv[1:])
+raw = bat.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+if any(b > 127 for b in raw):
+    raise SystemExit("start.bat must stay ASCII so cmd.exe can parse it")
+bat.write_bytes(raw.replace(b"\n", b"\r\n"))
+body = ps1.read_bytes()
+if body.startswith(b"\xef\xbb\xbf"):
+    body = body[3:]
+body.decode("utf-8")
+ps1.write_bytes(b"\xef\xbb\xbf" + body)
+print("normalized start.bat CRLF and launcher.ps1 UTF-8 BOM")
+PY
 cp "$ROOT/packaging/macos/Transcriber.app/Contents/Resources/waiting.html" "$APP/"
 cp "$ROOT/desktop_splash.py" "$APP/"
 cp "$ROOT/start.py" "$ROOT/desktop_window.py" "$ROOT/desktop_splash.py" "$ROOT/requirements.txt" "$ROOT/LICENSE" "$ROOT/README.md" "$APP/app/"
@@ -26,10 +41,12 @@ rsync -a --delete --exclude __pycache__ \
   "$ROOT/static/" "$APP/app/static/"
 
 UV_ZIP="$DIST/uv-win.zip"
+UV_URL="https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
 echo "download uv-x86_64-pc-windows-msvc.zip"
 if [[ ! -s "$UV_ZIP" ]]; then
-  curl -fL --retry 5 --retry-all-errors --retry-delay 2 -o "$UV_ZIP" \
-    "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+  curl -fL --retry 5 --retry-all-errors --retry-delay 2 -o "$UV_ZIP" "$UV_URL" \
+    || curl -fL --retry 3 --retry-all-errors --retry-delay 2 -o "$UV_ZIP" "https://ghfast.top/$UV_URL" \
+    || curl -fL --retry 3 --retry-all-errors --retry-delay 2 -o "$UV_ZIP" "https://ghproxy.net/$UV_URL"
 fi
 unzip -qo "$UV_ZIP" -d "$DIST/uv-unpack"
 found="$(find "$DIST/uv-unpack" -name uv.exe -type f | head -1)"

@@ -1,6 +1,7 @@
-# 猫听转文字 · Windows 本机应用
+﻿# 猫听转文字 · Windows 本机应用
 # 准备环境并打开桌面窗口。
 $ErrorActionPreference = "Stop"
+Write-Host "正在启动猫听转文字…"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -28,7 +29,7 @@ function Copy-Diagnostics([string]$Message) {
     $lines = @(
         "猫听转文字 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
-        "launcher=windows-20261007a",
+        "launcher=windows-20261105a",
         "os=$([Environment]::OSVersion.VersionString)",
         "root=$Root",
         "error=$Message",
@@ -111,12 +112,18 @@ function Show-DiagWindow([string]$Text) {
 }
 
 function Fail([string]$Message) {
-    Write-Log "ERROR: $Message"
-    Stop-Bootstrap
-    Copy-Diagnostics $Message
-    $diag = Join-Path $LogDir "media-transcriber-diag.txt"
-    $text = if (Test-Path $diag) { Get-Content $diag -Raw -Encoding UTF8 } else { $Message }
-    Show-DiagWindow $text
+    Write-Host ""
+    Write-Host "启动失败：$Message"
+    try { Write-Log "ERROR: $Message" } catch {}
+    try { Stop-Bootstrap } catch {}
+    try { Copy-Diagnostics $Message } catch {}
+    try {
+        $diag = Join-Path $LogDir "media-transcriber-diag.txt"
+        $text = if (Test-Path $diag) { Get-Content $diag -Raw -Encoding UTF8 } else { $Message }
+        Show-DiagWindow $text
+    } catch {
+        Write-Host "没法弹出说明窗口。"
+    }
     exit 1
 }
 
@@ -247,11 +254,18 @@ function Open-DesktopWindow {
     if (Test-Path $splash) {
         $spy = Get-Command python3 -ErrorAction SilentlyContinue
         if (-not $spy) { $spy = Get-Command python -ErrorAction SilentlyContinue }
-        if ($spy) {
-            Write-Log "open splash"
-            $proc = Start-Process -FilePath $spy.Source -ArgumentList @($splash) -PassThru
-            Set-Content -Path (Join-Path $Data "splash.pid") -Value $proc.Id
-            return
+        $pyPath = if ($spy) { [string]$spy.Source } else { "" }
+        # Windows 商店的 python.exe 是 0 字节占位，跑不了准备页，不能把它当成已安装。
+        $storeAlias = $pyPath -match '\\WindowsApps\\'
+        if ($pyPath -and -not $storeAlias) {
+            try {
+                Write-Log "open splash"
+                $proc = Start-Process -FilePath $pyPath -ArgumentList @($splash) -PassThru -ErrorAction Stop
+                Set-Content -Path (Join-Path $Data "splash.pid") -Value $proc.Id
+                return
+            } catch {
+                Write-Log "splash failed"
+            }
         }
     }
     if (-not (Test-HelperReady)) {
@@ -265,6 +279,7 @@ function Open-DesktopWindow {
             }
         }
     }
+    Write-Host "正在打开准备页面…"
     try { Start-Process $Local } catch { Write-Log "open waiting page failed" }
 }
 
@@ -279,8 +294,11 @@ function Wait-DesktopWindow {
 function Sync-AppDir([string]$From, [string]$To) {
     New-Item -ItemType Directory -Force -Path $To | Out-Null
     $code = 0
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & robocopy $From $To /MIR /XD temp .venv /XF cookies.txt /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
     $code = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
     if ($code -ge 8) { Fail "没法复制程序文件。" }
 }
 
@@ -341,7 +359,11 @@ if ($hasBundledPython) {
 $env:Path = "$(Join-Path $Data 'bin');$(Join-Path $Root 'bin');$env:Path"
 
 Write-Log "launch begin"
-Register-Protocol
+try {
+    Register-Protocol
+} catch {
+    Write-Log "protocol skipped: $($_.Exception.Message)"
+}
 
 function Ensure-Uv {
     $dest = Join-Path $Data "bin\uv.exe"
@@ -498,14 +520,14 @@ function Ensure-Venv {
     )
     $ok = $false
     foreach ($idx in $indexes) {
-        $host = ([Uri]$idx).Host
+        $indexHost = ([Uri]$idx).Host
         Write-Log "try index $idx"
         if (Test-Path $uv) {
             & $uv pip install --python $py -r $req --index-url $idx
             if ($LASTEXITCODE -eq 0) { $ok = $true; break }
             Write-Log "uv pip failed on $idx"
         }
-        & $py -m pip install -r $req -i $idx --trusted-host $host --timeout 60 --retries 2
+        & $py -m pip install -r $req -i $idx --trusted-host $indexHost --timeout 60 --retries 2
         if ($LASTEXITCODE -eq 0) { $ok = $true; break }
         Write-Log "pip failed on $idx"
     }
@@ -533,10 +555,15 @@ function Wait-Ready {
 
 try {
     Open-DesktopWindow
+    Write-Host "正在准备运行环境…"
     Ensure-Uv
+    Write-Host "正在检查更新…"
     Refresh-App
+    Write-Host "正在安装依赖…"
     Ensure-Venv
+    Write-Host "正在准备音频组件…"
     Ensure-Ffmpeg
+    Write-Host "正在打开窗口…"
     Start-Server
     Wait-Ready
     Write-Log "launch ok"
@@ -544,7 +571,9 @@ try {
     Open-DesktopWindow
     Wait-DesktopWindow
 } catch {
-    Stop-Bootstrap
+    $detail = $_.Exception.Message
+    try { Write-Log "catch $detail" } catch {}
+    try { Stop-Bootstrap } catch {}
     Fail "没法安装运行环境。请检查网络后再打开一次。"
 }
 exit 0
