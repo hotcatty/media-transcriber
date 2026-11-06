@@ -6,7 +6,7 @@
 
 ## 三个版本
 
-| | 线上体验版 | Skill 版（给 AI 用） | 本地桌面版 |
+| | 网页体验版 | Skill 版（给 AI 用） | 本地桌面版 |
 |---|---|---|---|
 | 入口 | http://maoting.online | 把下面那段话发给 Cursor / Claude Code / Codex | 本页 [Release](https://github.com/hotcatty/media-transcriber/releases/latest) 安装包 |
 | 怎么用 | 打开网页，粘贴链接 | 「把这个视频转成文字」 | 打开应用，粘贴链接 |
@@ -15,11 +15,11 @@
 
 线上版主要是体验。已经在用 AI 编程助手的话，用 Skill 版最省事。使用频率高的话，可以选用本地桌面版。
 
-## 线上体验版
+## 网页体验版
 
 打开 http://maoting.online ，粘贴链接即可进行转录。
 
-由于是大陆机房，所以无法转录YouTube等海外音视频。
+由于是大陆机房，所以网页版无法转录YouTube等海外音视频。
 
 ## Skill 版
 
