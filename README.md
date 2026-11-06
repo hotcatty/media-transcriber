@@ -92,7 +92,7 @@ https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTran
 
 ## 意见反馈
 
-使用中有问题或建议，可以加微信 **edecev2009**，添加时请备注清楚来意（例如「猫听转文字反馈」），通过后再说具体问题。
+使用中有问题或建议，可以加微信 **edecev2009**，添加时请备注清楚来意（例如「猫听转文字反馈」）。
 
 ## 自己改代码
 
