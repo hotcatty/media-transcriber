@@ -74,7 +74,7 @@ https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTran
 1. 解压，双击 `start.bat`
 2. 如果弹出「Windows 已保护你的电脑」，点「更多信息」，再点「仍要运行」
 
-有更新时，Windows 再打开一次通常会自己跟上；Mac 请重新下载本页 Release。首页若出现「有新版本」，点进去即可。
+如有更新，Windows 再打开一次通常会自动更新；Mac 则需要重新下载本页 Release。
 
 更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
