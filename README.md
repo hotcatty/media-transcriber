@@ -58,25 +58,7 @@ Cursor 已经打开该仓库就先 git pull 再用；否则先 clone 再打开�
 
 ## 本地桌面版
 
-在 [Releases](https://github.com/hotcatty/media-transcriber/releases/latest) 下载对应系统的压缩包。
-
-**Mac**  
-https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-macOS.zip
-
-1. 解压，双击打开「猫听转文字」
-2. 系统会弹出「无法打开 / 有安全风险」，并建议「移到废纸篓」。应用没有做苹果公证，属正常情况。请点「完成」，**不要点「移到废纸篓」**
-3. 打开系统设置 → 隐私与安全性 → 「仍要打开」（有的系统要再确认一次）
-4. 双击打开。
-
-**Windows**  
-https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTranscriber-windows.zip
-
-1. 解压，双击 `start.bat`
-2. 如果弹出「Windows 已保护你的电脑」，点「更多信息」，再点「仍要运行」
-
-如有更新，Windows 再打开一次通常会自动更新；Mac 则需要重新下载本页 Release。
-
-更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+请于 [Releases](https://github.com/hotcatty/media-transcriber/releases/latest) 下载对应系统的压缩包。
 
 ## 安全
 
