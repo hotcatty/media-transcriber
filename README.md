@@ -2,9 +2,7 @@
 
 <img src="packaging/icons/app-icon.png" width="128" height="128" alt="猫听转文字">
 
-把分享链接转成简体逐字稿。
-
-识别用的是开源的 [Whisper](https://github.com/openai/whisper) 语音模型
+把音视频链接转成简体中文逐字稿。
 
 ## 三个版本
 
