@@ -19,7 +19,7 @@
 
 打开 http://maoting.online ，粘贴链接即可进行转录。
 
-由于大陆机房连不上 YouTube，所以线上版没有海外接口。
+由于是大陆机房，所以无法转录YouTube等海外音视频。
 
 ## Skill 版
 
