@@ -12,21 +12,20 @@
 |---|---|---|---|
 | 入口 | http://maoting.online | 把下面那段话发给 Cursor / Claude Code / Codex | 本页 [Release](https://github.com/hotcatty/media-transcriber/releases/latest) 安装包 |
 | 怎么用 | 打开网页，粘贴链接 | 「把这个视频转成文字」 | 打开应用，粘贴链接 |
-| 平台 | 小宇宙、B 站、小红书、抖音、微信、苹果播客 | 增加youtube | 同左 |
-| 速度 | 人多会排队 | 本机 Turbo，大约比线上快三四倍 | 同左 |
-| 数据 | 缓存数据存在浏览器 | 音频和文稿只留在你电脑上 | 同左 |
+| 平台 | 小宇宙、B 站、小红书、抖音、苹果播客 | 增加youtube | 同左 |
+| 速度 | 约为视频时间的1/3 | 约为视频时间的1/10 | 同左 |
 
 线上版主要是体验。已经在用 AI 编程助手的话，用 Skill 版最省事。使用频率高的话，可以选用本地桌面版。
 
 ## 线上体验版
 
-打开 http://maoting.online ，把链接贴进去，点击转录。
+打开 http://maoting.online ，粘贴链接即可进行转录。
 
 由于大陆机房连不上 YouTube，所以线上版没有海外接口。
 
-## Skill 版（推荐给正在用 Cursor / Claude Code 的人）
+## Skill 版
 
-点下面代码块右上角复制，粘贴给你的 AI（新开一个对话也行）。这段话里带了仓库地址，不要求你已经打开这个项目：
+点下面代码块右上角复制，粘贴任意ai agent(如workbuddy、千问办公、codex、cursor等）：
 
 ```text
 帮我安装「猫听转文字」本地转录 Skill。
@@ -42,18 +41,7 @@ Cursor 已经打开该仓库就先 git pull 再用；否则先 clone 再打开�
 4. 装完告诉我可以开始贴链接了
 ```
 
-它会逐条问你要不要执行命令，点同意就行。第一次主要在下语音模型，之后就不用管。
-
-装完直接对话：
-
-```text
-把这个视频转成文字 https://...
-这条链接讲了什么
-拆解一下这期播客，开头钩子是怎么做的
-```
-
-文字稿会出现在对话里，同时落到 `~/transcripts/` 下面。AI 会先给你结论和要点，需要原文再看文件。
-
+它会逐条问你要不要执行命令，点同意就行。第一次需要安装下语音模型，之后便可正常对话。
 已经 clone 了本仓库时，Cursor 会读 `.cursor/skills/media-transcriber/`。也可以把仓库放到 `~/.claude/skills/media-transcriber/` 或 `~/.codex/skills/media-transcriber/` 给 Claude Code / Codex 用。
 
 ## 本地桌面版
@@ -68,9 +56,9 @@ Cursor 已经打开该仓库就先 git pull 再用；否则先 clone 再打开�
 
 ## 技术原理
 
-- 语音识别用 [OpenAI Whisper](https://github.com/openai/whisper)（开源）。本地版用更大、更快的 Turbo 模型（苹果芯片走 MLX，其它电脑走 faster-whisper）；线上体验版用更小的模型、一次只处理一条，所以人多的时候处理速度会很慢。
+- 语音识别用 [OpenAI Whisper](https://github.com/openai/whisper)（开源）。本地版用更大、更快的 Turbo 模型（苹果芯片走 MLX，其它电脑走 faster-whisper）；线上体验版用更小的模型。
 - 链接解析和音频下载用 [yt-dlp](https://github.com/yt-dlp/yt-dlp)，再用 ffmpeg 抽成适合识别的音频。
-- 页面标题、简介等会当作识别时的提示，减少人名、术语听错。
+- 页面标题、简介等会当作识别时的提示，以减少人名、术语转录上的错误。
 
 ## 意见反馈
 
