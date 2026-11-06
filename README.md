@@ -4,7 +4,7 @@
 
 把分享链接转成简体逐字稿。
 
-识别用的是开源的 [Whisper](https://github.com/openai/whisper) 语音模型：先下载音频，再在本地或体验服务器上听写成文字。
+识别用的是开源的 [Whisper](https://github.com/openai/whisper) 语音模型
 
 ## 三个版本
 
