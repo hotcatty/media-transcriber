@@ -80,14 +80,13 @@ https://github.com/hotcatty/media-transcriber/releases/latest/download/MediaTran
 
 ## 安全
 
-- **本地桌面版 / Skill 版**：音频、逐字稿、历史记录都在你这台电脑上，不会发到我们的服务器，读不到账号密码，也不会上传。
-- **线上体验版**：链接会在体验服务器上下载并识别，历史记录只留在你这台浏览器里。
+- **本地桌面版 / Skill 版**：音频、逐字稿、历史记录都在本机，不会发到服务器。
+- **线上体验版**：链接会在体验服务器上下载并识别，历史记录只留在浏览器里。
 - 充电视频：请用**已经充过电的账号**的登录状态再试，否则下不到音频。
-- 本项目开源，代码都在这个仓库里，可以自己查看。
 
 ## 技术原理
 
-- 语音识别用 [OpenAI Whisper](https://github.com/openai/whisper)（开源）。本地版用更大、更快的 Turbo 模型（苹果芯片走 MLX，其它电脑走 faster-whisper）；线上体验版用更小的模型、一次只处理一条，所以人多会慢。
+- 语音识别用 [OpenAI Whisper](https://github.com/openai/whisper)（开源）。本地版用更大、更快的 Turbo 模型（苹果芯片走 MLX，其它电脑走 faster-whisper）；线上体验版用更小的模型、一次只处理一条，所以人多的时候处理速度会很慢。
 - 链接解析和音频下载用 [yt-dlp](https://github.com/yt-dlp/yt-dlp)，再用 ffmpeg 抽成适合识别的音频。
 - 页面标题、简介等会当作识别时的提示，减少人名、术语听错。
 
