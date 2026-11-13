@@ -48,14 +48,36 @@ function opNote(event, detail) {
   if (opLog.length > OP_LOG_MAX) opLog.shift();
 }
 
-function paintUpdateLink() {
+let updatePoll = null;
+
+function paintUpdateStatus() {
   if (!isLocalHelper()) return;
-  const el = $("updateLink");
-  if (!el) return;
+  if (updatePoll) {
+    clearTimeout(updatePoll);
+    updatePoll = null;
+  }
   mtFetch("/api/update").then((r) => r.json()).then((data) => {
-    if (!data || !data.newer || !data.url) return;
-    el.href = data.url;
-    el.hidden = false;
+    const banner = $("updateStatus");
+    const link = $("updateLink");
+    const phase = (data && data.phase) || "";
+    const message = (data && data.message) || "";
+    const busy = phase === "checking" || phase === "downloading" || phase === "applying";
+    if (banner) {
+      const show = !!message && phase !== "checking" && phase !== "idle";
+      banner.hidden = !show;
+      banner.textContent = show ? message : "";
+    }
+    if (link) {
+      const showLink = !!(data && data.newer && data.url)
+        && phase !== "downloading" && phase !== "applying" && phase !== "staged";
+      if (showLink) {
+        link.href = data.url;
+        link.hidden = false;
+      } else if (busy || phase === "staged") {
+        link.hidden = true;
+      }
+    }
+    if (busy) updatePoll = setTimeout(paintUpdateStatus, 1000);
   }).catch(() => {});
 }
 
@@ -1857,7 +1879,7 @@ document.addEventListener("DOMContentLoaded", () => {
       $("urlInput").value = share;
       syncUrlClear();
     }
-    paintUpdateLink();
+    paintUpdateStatus();
     if (runLabScene(scene)) {
       return;
     }

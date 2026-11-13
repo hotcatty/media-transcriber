@@ -11,7 +11,6 @@ $Log = Join-Path $LogDir "media-transcriber.log"
 $PidFile = Join-Path $Data "server.pid"
 $Port = if ($env:MT_PORT) { $env:MT_PORT } else { "8766" }
 $Local = "http://127.0.0.1:$Port"
-$Repo = "hotcatty/media-transcriber"
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Data "bin"), (Join-Path $Data "app"), $LogDir | Out-Null
 
@@ -29,7 +28,7 @@ function Copy-Diagnostics([string]$Message) {
     $lines = @(
         "猫听转文字 诊断",
         "time=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
-        "launcher=windows-20261105a",
+        "launcher=windows-20261113a",
         "os=$([Environment]::OSVersion.VersionString)",
         "root=$Root",
         "error=$Message",
@@ -139,6 +138,13 @@ function Test-HelperReady {
     }
 }
 
+function Test-ServerPidAlive {
+    if (-not (Test-Path $PidFile)) { return $false }
+    $p = Get-Content $PidFile -ErrorAction SilentlyContinue
+    if (-not $p) { return $false }
+    return $null -ne (Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue)
+}
+
 function Start-Bootstrap {
     if (Test-HelperReady) { return }
     $htmlPath = Join-Path $Root "waiting.html"
@@ -233,7 +239,7 @@ function Open-DesktopWindow {
         $script = Join-Path $Root "app\desktop_window.py"
     }
     if ((Test-Path $py) -and (Test-Path $script)) {
-        if (-not (Test-HelperReady)) {
+        if (-not (Test-HelperReady) -and -not (Test-ServerPidAlive)) {
             Start-Bootstrap
             for ($i = 0; $i -lt 10; $i++) {
                 try {
@@ -268,7 +274,7 @@ function Open-DesktopWindow {
             }
         }
     }
-    if (-not (Test-HelperReady)) {
+    if (-not (Test-HelperReady) -and -not (Test-ServerPidAlive)) {
         Start-Bootstrap
         for ($i = 0; $i -lt 10; $i++) {
             try {
@@ -340,6 +346,7 @@ function GitHub-Fetch([string]$Dest, [string]$Url) {
 $env:MT_HOST = "127.0.0.1"
 $env:MT_PORT = "$Port"
 $env:MT_TEMP_DIR = Join-Path $Data "temp"
+$env:MT_AUTO_UPDATE = "1"
 $env:MT_COOKIE_FILE = Join-Path $Data "cookies.txt"
 $env:MT_FFMPEG = Join-Path $Data "bin\ffmpeg.exe"
 $env:MT_FFPROBE = Join-Path $Data "bin\ffprobe.exe"
@@ -427,44 +434,105 @@ function Copy-BundledApp {
 }
 
 if (Test-HelperReady) {
-    Write-Log "already running; refresh bundled files and reopen window"
-    [void](Copy-BundledApp)
+    Write-Log "already running; reopen window"
     Stop-DesktopWindow
     Open-DesktopWindow
     Wait-DesktopWindow
     exit 0
 }
 
-function Refresh-App {
-    if (-not (Test-Path (Join-Path $Data "app\backend"))) {
-        [void](Copy-BundledApp)
-        Write-Log "using bundled app"
+function Get-AppVersion([string]$ConfigPath) {
+    if (-not (Test-Path $ConfigPath)) { return "" }
+    foreach ($line in (Get-Content $ConfigPath -ErrorAction SilentlyContinue)) {
+        if ($line -match 'APP_VERSION = "([^"]+)"') { return $Matches[1] }
     }
-    $zip = Join-Path $Data "src.zip"
-    $tmp = Join-Path $Data "src-unpack"
-    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-    $ok = GitHub-Fetch $zip "https://codeload.github.com/$Repo/zip/refs/heads/main"
-    if (-not $ok) { $ok = Fetch-Url $zip @("https://api.github.com/repos/$Repo/zipball/main") }
-    if ($ok) {
-        Expand-Archive -Path $zip -DestinationPath $tmp -Force
-        $inner = Get-ChildItem $tmp -Directory | Select-Object -First 1
-        if ($inner -and (Test-Path (Join-Path $inner.FullName "backend"))) {
-            Sync-AppDir $inner.FullName (Join-Path $Data "app")
-            Remove-Item $tmp, $zip -Recurse -Force -ErrorAction SilentlyContinue
-            return
+    return ""
+}
+
+function Test-VersionGt([string]$Left, [string]$Right) {
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) { return $false }
+    $a = $Left.Split(".")
+    $b = $Right.Split(".")
+    $n = [Math]::Max($a.Count, $b.Count)
+    for ($i = 0; $i -lt $n; $i++) {
+        $x = 0
+        $y = 0
+        if ($i -lt $a.Count) { [void][int]::TryParse(($a[$i] -replace '\D', ''), [ref]$x) }
+        if ($i -lt $b.Count) { [void][int]::TryParse(($b[$i] -replace '\D', ''), [ref]$y) }
+        if ($x -gt $y) { return $true }
+        if ($x -lt $y) { return $false }
+    }
+    return $false
+}
+
+function Use-LocalApp {
+    $installed = Join-Path $Data "app\backend"
+    $bundledCfg = Join-Path $Root "app\backend\config.py"
+    $installedCfg = Join-Path $Data "app\backend\config.py"
+    if (Test-Path $installed) {
+        $bv = Get-AppVersion $bundledCfg
+        $iv = Get-AppVersion $installedCfg
+        if (Test-VersionGt $bv $iv) {
+            Write-Log "copy newer bundled app $bv over $iv"
+            try { [void](Copy-BundledApp) } catch { Write-Log "bundle copy failed; keep installed" }
+        } else {
+            Write-Log "using installed app $iv"
         }
+        return
     }
-    Remove-Item $tmp, $zip -Recurse -Force -ErrorAction SilentlyContinue
-    if (Test-Path (Join-Path $Data "app\backend")) {
-        Write-Log "keep existing app copy"
+    if (Test-Path (Join-Path $Data "pending-update\tree\backend")) {
+        Write-Log "no installed app yet; staged update will supply it"
+        New-Item -ItemType Directory -Force -Path (Join-Path $Data "app") | Out-Null
         return
     }
     if (Copy-BundledApp) {
         Write-Log "using bundled app"
         return
     }
-    Fail "没法下载程序文件。请检查网络后再打开一次。"
+    Fail "找不到已经装好的程序。请重新安装。"
+}
+
+function Apply-StagedUpdate {
+    $pending = Join-Path $Data "pending-update"
+    $ready = Join-Path $pending "READY"
+    $tree = Join-Path $pending "tree"
+    if (-not (Test-Path $ready) -or -not (Test-Path (Join-Path $tree "backend"))) { return }
+    $sv = ""
+    try { $sv = (Get-Content $ready -Raw).Trim().TrimStart("v") } catch { $sv = "" }
+    $iv = Get-AppVersion (Join-Path $Data "app\backend\config.py")
+    if ($iv -and -not (Test-VersionGt $sv $iv)) {
+        Write-Log "staged update $sv is not newer than $iv"
+        Remove-Item $pending -Recurse -Force -ErrorAction SilentlyContinue
+        return
+    }
+    Write-Log "apply staged update from local disk"
+    $dest = Join-Path $Data "app"
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & robocopy $tree $dest /MIR /XD temp .venv /XF cookies.txt /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($code -ge 8) {
+        Write-Log "staged update skipped code=$code"
+        return
+    }
+    Remove-Item $pending -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Log "staged update applied"
+}
+
+function Test-DepsReady {
+    $py = Join-Path $Data "venv\Scripts\python.exe"
+    if (-not (Test-Path $py)) { return $false }
+    & $py -c "import fastapi, uvicorn, yt_dlp, webview" *> $null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $ff = Join-Path $Data "bin\ffmpeg.exe"
+    $fp = Join-Path $Data "bin\ffprobe.exe"
+    if ((Test-Path $ff) -and (Test-Path $fp)) { return $true }
+    $haveFf = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    $haveFp = Get-Command ffprobe -ErrorAction SilentlyContinue
+    if ($haveFf -and $haveFp) { return $true }
+    return $false
 }
 
 function Find-BundledPython {
@@ -509,6 +577,11 @@ function Ensure-Venv {
             if (-not $ok) { Fail "没法准备 Python。请删掉旧文件后重新下载再打开。" }
         }
     }
+    & $py -c "import fastapi, uvicorn, yt_dlp, webview" *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Log "venv ready; skip package install"
+        return
+    }
     Write-Log "install python packages"
     $req = Join-Path $Data "app\requirements.txt"
     $indexes = @(
@@ -550,22 +623,33 @@ function Wait-Ready {
         if (Test-HelperReady) { return }
         Start-Sleep -Seconds 1
     }
-    Fail "服务启动超时。关掉再打开一次试试。"
+    Write-Log "server still starting after 90s; leaving the window open"
 }
 
 try {
-    Open-DesktopWindow
-    Write-Host "正在准备运行环境…"
-    Ensure-Uv
-    Write-Host "正在检查更新…"
-    Refresh-App
-    Write-Host "正在安装依赖…"
-    Ensure-Venv
-    Write-Host "正在准备音频组件…"
-    Ensure-Ffmpeg
-    Write-Host "正在打开窗口…"
-    Start-Server
-    Wait-Ready
+    Use-LocalApp
+    Apply-StagedUpdate
+    if (Test-DepsReady) {
+        # FAST_PATH_START: installed copy, no GitHub, then the usable window.
+        Write-Log "start from installed copy"
+        Start-Server
+        Open-DesktopWindow
+        Wait-Ready
+        # FAST_PATH_END
+    } else {
+        # SLOW_PATH_START: show a window before any first-run download.
+        Write-Log "first-run setup; show window before downloads"
+        Open-DesktopWindow
+        Write-Host "正在准备运行环境…"
+        Ensure-Uv
+        Write-Host "正在安装依赖…"
+        Ensure-Venv
+        Write-Host "正在准备音频组件…"
+        Ensure-Ffmpeg
+        Start-Server
+        Wait-Ready
+        # SLOW_PATH_END
+    }
     Write-Log "launch ok"
     Stop-Splash
     Open-DesktopWindow

@@ -97,6 +97,17 @@ body {
   gap: 24px;
 }
 
+.update-status {
+  margin: 0;
+  text-align: center;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  padding: 14px 18px;
+}
+
 .beian {
   position: fixed;
   left: 0;
