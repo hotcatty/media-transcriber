@@ -24,7 +24,7 @@ def main() -> None:
     ).pack(fill="x")
     tk.Label(
         wrap,
-        text="第一次需要自动下载运行环境，大约几分钟。",
+        text="第一次需要自动下载运行环境，大约几分钟。窗口会一直开着。",
         font=(family, 16, "normal"),
         bg="#ffffff",
         fg="#00000099",

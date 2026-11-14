@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import app_update
 import audio as audio_utils
 import config
 import cookie_import
@@ -145,18 +146,8 @@ async def lifespan(_: FastAPI):
     jobs.stop()
 
 
-def _version_parts(tag: str) -> tuple:
-    out = []
-    for part in str(tag or "").lstrip("v").split("."):
-        try:
-            out.append(int(part))
-        except ValueError:
-            out.append(0)
-    return tuple(out or (0,))
-
-
 def _version_newer(latest: str, current: str) -> bool:
-    return _version_parts(latest) > _version_parts(current)
+    return app_update.version_newer(latest, current)
 
 
 app = FastAPI(
@@ -248,10 +239,12 @@ async def ping():
 
 @app.get("/api/update")
 async def update_check(request: Request):
+    """Release check. The installed helper downloads in the background after the UI is up."""
     current = config.APP_VERSION
-    empty = {"current": current, "latest": current, "newer": False, "url": ""}
     if config.PUBLIC_WEB or not _is_local_helper(request):
-        return empty
+        return app_update.idle_payload(current)
+    if app_update.auto_update_enabled():
+        return app_update.ensure_background(current)
     latest = current
     try:
         req = urllib.request.Request(
@@ -267,14 +260,15 @@ async def update_check(request: Request):
         if tag:
             latest = tag
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
-        return empty
+        return app_update.idle_payload(current)
     newer = _version_newer(latest, current)
-    return {
-        "current": current,
+    payload = app_update.idle_payload(current)
+    payload.update({
         "latest": latest,
         "newer": newer,
         "url": config.UPDATE_URL if newer else "",
-    }
+    })
+    return payload
 
 
 @app.get("/api/health")

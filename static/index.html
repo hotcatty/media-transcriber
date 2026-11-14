@@ -20,13 +20,14 @@
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="stylesheet" href="/static/ui.css?v=cloud34">
-  <link rel="stylesheet" href="/static/style.css?v=cloud39">
+  <link rel="stylesheet" href="/static/style.css?v=cloud40">
 </head>
 <body>
   <canvas id="sky" class="sky" aria-hidden="true"></canvas>
   <div class="sky-art" aria-hidden="true"></div>
   <div class="stage">
     <div class="desk">
+      <p id="updateStatus" class="update-status" hidden role="status"></p>
       <form class="card" id="mainCard" novalidate>
         <div class="bar">
           <div class="url-wrap" id="urlWrap">
@@ -261,7 +262,7 @@
   <script src="/static/config.js?v=cloud19"></script>
   <script src="/static/ui.js?v=apple-pod1"></script>
   <script src="/static/galaxy.js?v=cloud22" defer></script>
-  <script src="/static/app.js?v=cloud39"></script>
+  <script src="/static/app.js?v=cloud40"></script>
   <script>
     (function () {
       var h = (location.hostname || "").toLowerCase();

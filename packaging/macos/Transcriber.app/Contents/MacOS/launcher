@@ -1,8 +1,43 @@
 #!/bin/bash
 # 猫听转文字 · 本机助手
-# 双击后立刻打开准备页（第一次要几分钟）。不要用 osascript：
-# 未公证的 app 会因此弹出「脚本编辑器」，看起来像没打开。
+# 双击先打开已经装好的本机版本。更新只在窗口可用之后在后台进行。
+# 不要用 osascript：未公证的 app 会因此弹出「脚本编辑器」，看起来像没打开。
 set -u
+
+version_gt() {
+  # True when $1 is a newer dotted version than $2. Bash 3.2 safe.
+  local a="$1" b="$2"
+  [[ -n "$a" && -n "$b" ]] || return 1
+  local IFS=.
+  local -a aa bb
+  read -r -a aa <<< "${a//[^0-9.]/}"
+  read -r -a bb <<< "${b//[^0-9.]/}"
+  local i n x y
+  n=${#aa[@]}
+  if [[ ${#bb[@]} -gt $n ]]; then
+    n=${#bb[@]}
+  fi
+  for ((i = 0; i < n; i++)); do
+    x=${aa[$i]:-0}
+    y=${bb[$i]:-0}
+    x=$((10#$x))
+    y=$((10#$y))
+    if [[ "$x" -gt "$y" ]]; then
+      return 0
+    fi
+    if [[ "$x" -lt "$y" ]]; then
+      return 1
+    fi
+  done
+  return 1
+}
+
+if [[ "${1:-}" == "--compare-versions" ]]; then
+  if version_gt "${2:-}" "${3:-}"; then
+    exit 0
+  fi
+  exit 1
+fi
 
 SCHEME_LAUNCH=0
 for arg in "$@"; do
@@ -21,10 +56,9 @@ LOG="$LOG_DIR/media-transcriber.log"
 PIDFILE="$DATA/server.pid"
 PORT="${MT_PORT:-8766}"
 LOCAL="http://127.0.0.1:${PORT}"
-REPO="hotcatty/media-transcriber"
 ARCH="$(uname -m)"
 LOCK="$DATA/launcher.lock"
-LAUNCHER_VER="20261006b"
+LAUNCHER_VER="20261113a"
 
 mkdir -p "$DATA/bin" "$DATA/app" "$DATA/python" "$LOG_DIR"
 # Keep stdout free so $(...) helpers can return a path. All logs go to the file.
@@ -78,6 +112,14 @@ helper_ready() {
   return 0
 }
 
+server_pid_alive() {
+  # The real server is starting. Do not bind the bootstrap page on its port.
+  local old
+  [[ -f "$PIDFILE" ]] || return 1
+  old="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [[ -n "$old" ]] && kill -0 "$old" 2>/dev/null
+}
+
 say_ready() {
   log "ready"
   stop_splash
@@ -86,6 +128,8 @@ say_ready() {
 
 export MT_HOST="127.0.0.1"
 export MT_PORT="$PORT"
+# The server checks for updates only after the window is usable.
+export MT_AUTO_UPDATE=1
 export MT_TEMP_DIR="$DATA/temp"
 export MT_COOKIE_FILE="$DATA/cookies.txt"
 export MT_MODELS_DIR="${HOME}/.cache/media-transcriber/models"
@@ -230,7 +274,7 @@ open_desktop_window() {
     script="$RESOURCES/app/desktop_window.py"
   fi
   if [[ -x "$py" && -f "$script" ]]; then
-    if ! helper_ready; then
+    if ! helper_ready && ! server_pid_alive; then
       start_bootstrap
       local i
       for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -261,7 +305,7 @@ open_desktop_window() {
       return 0
     fi
   fi
-  if ! helper_ready; then
+  if ! helper_ready && ! server_pid_alive; then
     start_bootstrap
     local i
     for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -623,35 +667,72 @@ copy_bundled_app() {
   return 1
 }
 
-refresh_app() {
-  local zip="$DATA/src.zip"
-  local tmp="$DATA/src-unpack"
-  log "refresh app from GitHub"
-  rm -rf "$tmp"
-  mkdir -p "$tmp"
-  if github_fetch "$zip" "https://codeload.github.com/${REPO}/zip/refs/heads/main" \
-    || curl_fetch "$zip" "https://api.github.com/repos/${REPO}/zipball/main"; then
-    unzip -q -o "$zip" -d "$tmp" || true
-    local inner
-    inner="$(find "$tmp" -maxdepth 1 -mindepth 1 -type d | head -1)"
-    if [[ -n "$inner" && -d "$inner/backend" ]]; then
-      rsync -a --delete --exclude temp --exclude .venv --exclude cookies.txt \
-        "$inner/" "$DATA/app/"
-      rm -rf "$tmp" "$zip"
-      log "using GitHub app"
-      return 0
+read_version() {
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  sed -n 's/^APP_VERSION = "\([^"]*\)".*/\1/p' "$f" | head -1
+}
+
+use_local_app() {
+  # Disk only. Never contact GitHub before the window is usable.
+  if [[ -d "$DATA/app/backend" ]]; then
+    local bv iv
+    bv="$(read_version "$RESOURCES/app/backend/config.py")"
+    iv="$(read_version "$DATA/app/backend/config.py")"
+    if version_gt "$bv" "$iv"; then
+      log "copy newer bundled app $bv over $iv"
+      copy_bundled_app || log "bundle copy failed; keep installed"
+    else
+      log "using installed app ${iv:-unknown}"
     fi
+    return 0
   fi
-  rm -rf "$tmp" "$zip"
+  if [[ -d "$DATA/pending-update/tree/backend" ]]; then
+    log "no installed app yet; staged update will supply it"
+    mkdir -p "$DATA/app"
+    return 0
+  fi
   if copy_bundled_app; then
     log "using bundled app"
     return 0
   fi
-  if [[ -d "$DATA/app/backend" ]]; then
-    log "keep existing app copy"
+  fail "找不到已经装好的程序。请重新安装「猫听转文字」。"
+}
+
+apply_staged_update() {
+  local pending="$DATA/pending-update"
+  local tree="$pending/tree"
+  [[ -f "$pending/READY" && -d "$tree/backend" ]] || return 0
+  local sv iv
+  sv="$(tr -d '[:space:]' <"$pending/READY")"
+  sv="${sv#v}"
+  iv="$(read_version "$DATA/app/backend/config.py")"
+  if [[ -n "$iv" ]] && ! version_gt "$sv" "$iv"; then
+    log "staged update $sv is not newer than $iv"
+    rm -rf "$pending"
     return 0
   fi
-  fail "没法下载程序文件。请检查网络后再打开一次。"
+  log "apply staged update from local disk"
+  if rsync -a --delete --exclude temp --exclude .venv --exclude cookies.txt \
+      "$tree/" "$DATA/app/"; then
+    rm -rf "$pending"
+    log "staged update applied"
+  else
+    log "staged update skipped"
+  fi
+  return 0
+}
+
+deps_ready() {
+  [[ -x "$DATA/venv/bin/python" ]] || return 1
+  "$DATA/venv/bin/python" -c 'import fastapi, uvicorn, yt_dlp, webview' >/dev/null 2>&1 || return 1
+  if runs_here "$DATA/bin/ffmpeg" && runs_here "$DATA/bin/ffprobe"; then
+    return 0
+  fi
+  if have_cmd ffmpeg && have_cmd ffprobe; then
+    return 0
+  fi
+  return 1
 }
 
 ensure_venv() {
@@ -691,6 +772,10 @@ ensure_venv() {
         fail "没法创建运行环境。"
       fi
     fi
+  fi
+  if [[ -x "$DATA/venv/bin/python" ]] && "$DATA/venv/bin/python" -c 'import fastapi, uvicorn, yt_dlp, webview' >/dev/null 2>&1; then
+    log "venv ready; skip package install"
+    return 0
   fi
   log "install python packages"
   local req="$DATA/app/requirements.txt"
@@ -756,7 +841,6 @@ start_server() {
     fi
   fi
   log "start server"
-  close_desktop_window
   cd "$DATA/app"
   /usr/bin/nohup "$DATA/venv/bin/python" start.py --prod >>"$LOG" 2>&1 &
   echo $! >"$PIDFILE"
@@ -771,26 +855,39 @@ wait_ready() {
     fi
     sleep 1
   done
-  fail "服务启动超时。关掉再打开一次「猫听转文字」试试。"
+  log "server still starting after 90s; leaving the window open"
+  return 0
 }
 
 log "launch begin arch=$ARCH scheme=$SCHEME_LAUNCH launcher=$LAUNCHER_VER resources=$RESOURCES"
 relocate_if_translocated
 if helper_ready; then
-  log "already running scheme=$SCHEME_LAUNCH; refresh bundled files and reopen window"
-  copy_bundled_app || true
+  log "already running scheme=$SCHEME_LAUNCH; reopen window"
   open_desktop_window force
   wait_desktop_window
   exit 0
 fi
 acquire_launch_lock
-open_desktop_window
-ensure_uv
-refresh_app
-ensure_venv
-ensure_ffmpeg
-start_server
-wait_ready
+use_local_app
+apply_staged_update
+if deps_ready; then
+  # FAST_PATH_START: installed copy, no GitHub, then the usable window.
+  log "start from installed copy"
+  start_server
+  open_desktop_window
+  wait_ready
+  # FAST_PATH_END
+else
+  # SLOW_PATH_START: show a window before any first-run download.
+  log "first-run setup; show window before downloads"
+  open_desktop_window
+  ensure_uv
+  ensure_venv
+  ensure_ffmpeg
+  start_server
+  wait_ready
+  # SLOW_PATH_END
+fi
 log "launch ok"
 say_ready
 wait_desktop_window
