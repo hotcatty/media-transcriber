@@ -135,6 +135,9 @@ class Segment:
 class ChunkResult:
     segments: List[Segment]
     language: Optional[str] = None
+    # 0–1. Absent when the engine was told the language, or cannot report it.
+    # A silent chunk can still come back as "en" at ~0.35; that must not lock.
+    language_probability: Optional[float] = None
 
 
 @dataclass

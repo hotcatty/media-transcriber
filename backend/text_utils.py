@@ -319,11 +319,17 @@ def bili_block_hint(text: str) -> str:
     if BILI_RISK_HINT in raw:
         return BILI_RISK_HINT
     low = raw.lower()
+    # yt-dlp's Bilibili extractor hides some risk-control replies behind
+    # these sentences. They are not a login prompt and not a generic timeout.
     if (
         "412" in raw
         or "precondition failed" in low
         or "请求被拦截" in raw
         or "风控" in raw
+        or "-352" in raw
+        or "rejected by server (352)" in low
+        or "blocked by server (401)" in low
+        or "exceeded the rate limit. try again later" in low
     ):
         return BILI_RISK_HINT
     return ""

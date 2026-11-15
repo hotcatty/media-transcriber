@@ -44,6 +44,29 @@ from text_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _use_certifi() -> None:
+    """Make urllib trust certifi's CA bundle.
+
+    The Windows embeddable Python often has no usable system certificate
+    store, so the Bilibili API fails there while the same call works on the
+    server. yt-dlp already ships its own bundle; urllib does not.
+    """
+    try:
+        import certifi
+        import ssl
+    except Exception:
+        return
+    cafile = certifi.where()
+    if not cafile:
+        return
+    os.environ.setdefault("SSL_CERT_FILE", cafile)
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", cafile)
+    if getattr(ssl, "_mt_certifi", None) == cafile:
+        return
+    ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=cafile)
+    ssl._mt_certifi = cafile
+
+
 class _BiliBlocked(Exception):
     """Bilibili answered HTTP 412. Internal only; callers map it to user copy."""
 
@@ -107,6 +130,10 @@ class VideoProcessor:
         self._guest_buvid_ready = False
         self._prefer_guest_buvid = False
         self._bili_input_short = False
+        # Last successful official-API resolution. Jobs run one at a time, so
+        # a single slot is enough. A later yt-dlp 412 must not throw it away.
+        self._bili_hit: dict = {}
+        _use_certifi()
         if config.PUBLIC_WEB:
             logger.info("公网版不落盘 Cookie，解析时使用当前会话的临时登录状态")
         elif Path(self.COOKIE_FILE).exists():
@@ -738,6 +765,25 @@ class VideoProcessor:
             parts.append(f"buvid4={b4}")
         return "; ".join(parts)
 
+    def _remember_bili(
+        self,
+        bvid: str,
+        view: Optional[dict] = None,
+        audio_url: Optional[str] = None,
+    ) -> None:
+        hit = self._bili_hit if self._bili_hit.get("bvid") == bvid else {"bvid": bvid}
+        if view:
+            hit["view"] = view
+        if audio_url:
+            hit["audio_url"] = audio_url
+        self._bili_hit = hit
+
+    def _recall_bili(self, bvid: str) -> dict:
+        hit = self._bili_hit or {}
+        if hit.get("bvid") != bvid:
+            return {}
+        return hit
+
     def _bilibili_json(self, api_url: str) -> dict:
         last_err: Optional[Exception] = None
         for attempt in range(2):
@@ -752,7 +798,7 @@ class VideoProcessor:
                 if not isinstance(payload, dict):
                     payload = {}
                 code = int((payload or {}).get("code") or 0)
-                if code in (-412, 412):
+                if code in (-412, 412, -352):
                     if attempt == 0:
                         logger.info("B站接口拒绝访问，刷新访客标识后重试一次")
                         self._refresh_bilibili_visitor()
@@ -781,6 +827,14 @@ class VideoProcessor:
                     self._guest_buvid3 = ""
                     self._guest_buvid4 = ""
                     self._guest_buvid_ready = False
+                    time.sleep(1.2)
+                    continue
+                raise
+            except (json.JSONDecodeError, UnicodeError, TimeoutError, urllib.error.URLError) as e:
+                # HTTPError is a URLError and is handled above.
+                last_err = e
+                if attempt == 0:
+                    logger.info("B站接口没有返回可解析结果，稍后重试")
                     time.sleep(1.2)
                     continue
                 raise
@@ -1059,7 +1113,12 @@ class VideoProcessor:
                     video_duration = view.get("duration") or video_duration
                     page_meta = self._bilibili_page_meta(view)
                     charge = self._bilibili_charge_locked(view)
+                    self._remember_bili(bvid, view=view)
                     logger.info("B站接口已解析: %s", video_title)
+                    # Grab the audio URL before yt-dlp. A 412 on the webpage
+                    # refreshes the visitor id and must not discard this URL.
+                    if not charge:
+                        await self._take_bili_audio(bvid, view)
                 except Exception as e:
                     if self._is_bili_block_text(str(e)):
                         raise
@@ -1166,6 +1225,12 @@ class VideoProcessor:
             if self._is_weixin(url) and "unsupported url" in low:
                 raise Exception(WECHAT_HINT)
             if self._is_bili_block_text(clean_err):
+                if not video_title and self._is_bilibili(url):
+                    recovered = await self._recover_bili_public(url)
+                    if recovered:
+                        video_title, video_duration, page_meta, charge = recovered
+                        logger.info("B站页面被拒绝，接口已解析，改走音频")
+                        return None, video_title, None, video_duration, charge, page_meta
                 if video_title:
                     logger.info("B站字幕被拒绝，改走音频下载")
                     return None, video_title, None, video_duration, charge, page_meta
@@ -1350,6 +1415,37 @@ class VideoProcessor:
             lines.append("")
         return "\n".join(lines)
 
+    async def _take_bili_audio(self, bvid: str, view: dict) -> None:
+        cid = view.get("cid")
+        if not cid:
+            return
+        try:
+            audio_url = await asyncio.to_thread(self._bilibili_audio_url, bvid, int(cid))
+        except Exception as e:
+            logger.info("B站音频地址稍后再取: %s", _clean(str(e))[:160])
+            return
+        if audio_url:
+            self._remember_bili(bvid, audio_url=audio_url)
+
+    async def _recover_bili_public(self, url: str):
+        """One more official-API resolve after the webpage was blocked."""
+        bvid = self._bvid(url)
+        if not bvid:
+            return None
+        try:
+            view = await asyncio.to_thread(self._bilibili_view, bvid)
+        except Exception as e:
+            logger.info("B站接口重试未解析: %s", _clean(str(e))[:160])
+            return None
+        title = (view.get("title") or "").strip()
+        if not title:
+            return None
+        self._remember_bili(bvid, view=view)
+        charge = self._bilibili_charge_locked(view)
+        if not charge:
+            await self._take_bili_audio(bvid, view)
+        return title, view.get("duration"), self._bilibili_page_meta(view), charge
+
     async def _download_bilibili_api(
         self,
         url: str,
@@ -1360,12 +1456,21 @@ class VideoProcessor:
         bvid = self._bvid(url)
         if not bvid:
             raise Exception("链接无效，请重新填写")
-        view = await asyncio.to_thread(self._bilibili_view, bvid)
+        hit = self._recall_bili(bvid)
+        view = hit.get("view")
+        if not view:
+            view = await asyncio.to_thread(self._bilibili_view, bvid)
+            self._remember_bili(bvid, view=view)
+            hit = self._recall_bili(bvid)
         title = prefetched_title or view.get("title") or "bilibili"
         cid = view.get("cid")
         if not cid:
             raise Exception("暂时无法下载音频")
-        audio_url = await asyncio.to_thread(self._bilibili_audio_url, bvid, int(cid))
+        audio_url = (hit.get("audio_url") or "").strip()
+        if not audio_url:
+            audio_url = await asyncio.to_thread(self._bilibili_audio_url, bvid, int(cid))
+            if audio_url:
+                self._remember_bili(bvid, audio_url=audio_url)
         if not audio_url:
             raise Exception("暂时无法下载音频")
         dest = output_dir / f"audio_{unique_id}.m4a"
