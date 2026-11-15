@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import json
@@ -9,7 +10,7 @@ import asyncio
 import subprocess
 import urllib.error
 import urllib.request
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 import yt_dlp
 import logging
 from pathlib import Path
@@ -22,6 +23,7 @@ from engines import Segment
 from text_utils import (
     BILI_RISK_HINT,
     BILI_SHORT_LINK_HINT,
+    CAPTION_CONTEXT_MAX,
     CHARGE_NEED_LOGIN_HINT,
     CHARGE_VIDEO_HINT,
     LOGIN_PARSE_HINT,
@@ -36,12 +38,96 @@ from text_utils import (
     is_douyin_url,
     is_weixin_url,
     is_xiaohongshu_url,
+    merge_page_meta,
     normalize_xiaohongshu_url,
     strip_ansi as _clean,
     to_simplified as _to_simplified,
 )
 
 logger = logging.getLogger(__name__)
+
+# Bilibili's wbi mixin. Official player API, not a page scrape.
+_WBI_MIXIN = (
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+    33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+    61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+    36, 20, 34, 44, 52,
+)
+_GENERIC_PARTS = {"正片", "完整版", "全集", "视频"}
+
+
+def _wbi_filename_key(url: str) -> str:
+    name = (url or "").rsplit("/", 1)[-1]
+    return name.split(".", 1)[0]
+
+
+def _mixin_key(img_key: str, sub_key: str) -> str:
+    raw = f"{img_key}{sub_key}"
+    if len(raw) <= max(_WBI_MIXIN):
+        return ""
+    return "".join(raw[i] for i in _WBI_MIXIN)[:32]
+
+
+def _sign_wbi(params: dict, img_key: str, sub_key: str) -> dict:
+    mixin = _mixin_key(img_key, sub_key)
+    if not mixin:
+        return {}
+    cleaned = {}
+    for key, value in params.items():
+        cleaned[key] = "".join(ch for ch in str(value) if ch not in "!'()*")
+    cleaned["wts"] = str(int(time.time()))
+    query = urlencode(sorted(cleaned.items()))
+    cleaned["w_rid"] = hashlib.md5((query + mixin).encode("utf-8")).hexdigest()
+    return cleaned
+
+
+def _subtitle_tracks(obj: dict) -> list:
+    if not isinstance(obj, dict):
+        return []
+    sub = obj.get("subtitle") or {}
+    if not isinstance(sub, dict):
+        return []
+    raw = sub.get("subtitles") or sub.get("list") or []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _track_is_ai(track: dict) -> bool:
+    lan = str(track.get("lan") or "").lower()
+    if lan.startswith("ai"):
+        return True
+    if "ai_subtitle" in str(track.get("subtitle_url") or ""):
+        return True
+    try:
+        return int(track.get("ai_status") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _track_is_zh(track: dict) -> bool:
+    lan = str(track.get("lan") or "").lower()
+    doc = str(track.get("lan_doc") or "")
+    return lan.startswith("zh") or lan.startswith("ai-zh") or "中文" in doc
+
+
+def _open_subtitle_tracks(tracks: list) -> list:
+    usable = []
+    for track in tracks:
+        if track.get("is_lock"):
+            continue
+        if not str(track.get("subtitle_url") or "").strip():
+            continue
+        usable.append(track)
+    usable.sort(key=lambda track: (not _track_is_zh(track), _track_is_ai(track)))
+    return usable
+
+
+def _useful_part(part: str, title: str, show: str) -> str:
+    part = (part or "").strip()
+    if not part or part in (title, show) or part in _GENERIC_PARTS:
+        return ""
+    if re.fullmatch(r"(?:[Pp]|EP|ep|第)?\d{1,3}(?:集|话|期)?", part):
+        return ""
+    return part
 
 
 def _use_certifi() -> None:
@@ -770,12 +856,18 @@ class VideoProcessor:
         bvid: str,
         view: Optional[dict] = None,
         audio_url: Optional[str] = None,
+        cid: Optional[int] = None,
     ) -> None:
         hit = self._bili_hit if self._bili_hit.get("bvid") == bvid else {"bvid": bvid}
         if view:
             hit["view"] = view
         if audio_url:
             hit["audio_url"] = audio_url
+        if cid:
+            try:
+                hit["cid"] = int(cid)
+            except (TypeError, ValueError):
+                pass
         self._bili_hit = hit
 
     def _recall_bili(self, bvid: str) -> dict:
@@ -853,19 +945,222 @@ class VideoProcessor:
             raise Exception("暂时无法解析")
         return data
 
-    def _bilibili_page_meta(self, view: dict) -> dict:
+    def _bilibili_json_soft(self, api_url: str) -> dict:
+        """One official-API read. A miss returns nothing and does not block download."""
+        try:
+            headers = self._headers_for("https://www.bilibili.com/")
+            cookie = self._bilibili_api_cookie()
+            if cookie:
+                headers["Cookie"] = cookie
+            req = urllib.request.Request(api_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                payload = json.loads(resp.read().decode("utf-8", "replace"))
+            if not isinstance(payload, dict):
+                return {}
+            data = payload.get("data") or {}
+            code = int(payload.get("code") or 0)
+            if code == 0:
+                return payload
+            # Logged-out nav is code -101 and still carries the wbi keys.
+            if isinstance(data, dict) and data.get("wbi_img"):
+                return payload
+            return {}
+        except Exception as e:
+            logger.info("B站补充信息没有拿到: %s", _clean(str(e))[:160])
+            return {}
+
+    def _read_json_url(self, url: str) -> dict:
+        host = self._url_host(url)
+        allowed = ("hdslb.com", "bilibili.com")
+        if not any(host == root or host.endswith("." + root) for root in allowed):
+            return {}
+        try:
+            headers = self._headers_for("https://www.bilibili.com/")
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                payload = json.loads(resp.read().decode("utf-8", "replace"))
+            return payload if isinstance(payload, dict) else {}
+        except Exception as e:
+            logger.info("B站字幕没有拿到: %s", _clean(str(e))[:160])
+            return {}
+
+    def _bilibili_target(self, view: dict, url: str) -> tuple:
+        """cid and part title for the requested page. Missing page stays on the view cid."""
+        pages = [p for p in (view.get("pages") or []) if isinstance(p, dict)]
+        want = 1
+        raw = self._bilibili_page_query(url)
+        if raw:
+            try:
+                want = int(raw)
+            except ValueError:
+                want = 1
+        chosen = None
+        for page in pages:
+            try:
+                number = int(page.get("page") or 0)
+            except (TypeError, ValueError):
+                continue
+            if number == want:
+                chosen = page
+                break
+        if chosen is None and pages and want == 1:
+            chosen = pages[0]
+        cid = None
+        part = ""
+        if chosen:
+            if chosen.get("cid"):
+                try:
+                    cid = int(chosen["cid"])
+                except (TypeError, ValueError):
+                    cid = None
+            part = (chosen.get("part") or "").strip()
+        if cid is None and view.get("cid"):
+            try:
+                cid = int(view["cid"])
+            except (TypeError, ValueError):
+                cid = None
+        title = (view.get("title") or "").strip()
+        show = ((view.get("owner") or {}).get("name") or "").strip()
+        page_duration = None
+        if chosen and chosen.get("duration"):
+            page_duration = chosen.get("duration")
+        return cid, _useful_part(part, title, show), page_duration
+
+    def _bilibili_description(self, view: dict) -> str:
+        desc = (view.get("desc") or "").strip()
+        if not desc:
+            bits = []
+            for item in view.get("desc_v2") or []:
+                if isinstance(item, dict):
+                    raw = (item.get("raw_text") or "").strip()
+                else:
+                    raw = str(item or "").strip()
+                if raw:
+                    bits.append(raw)
+            desc = "\n".join(bits).strip()
+        dynamic = (view.get("dynamic") or "").strip()
+        if dynamic and dynamic not in desc:
+            desc = f"{desc}\n{dynamic}".strip() if desc else dynamic
+        return _to_simplified(desc)
+
+    def _tag_names(self, items) -> list:
+        if isinstance(items, dict):
+            items = items.get("tags") or items.get("list") or []
+        if not isinstance(items, list):
+            return []
+        names = []
+        for item in items:
+            if isinstance(item, dict):
+                name = item.get("tag_name") or item.get("name") or ""
+            else:
+                name = item
+            text = str(name or "").strip()
+            if text and text not in names:
+                names.append(text)
+        return names
+
+    def _bilibili_tags(self, bvid: str, view: dict) -> list:
+        from_view = self._tag_names(view.get("tag"))
+        payload = self._bilibili_json_soft(
+            f"https://api.bilibili.com/x/tag/archive/tags?bvid={bvid}"
+        )
+        from_api = self._tag_names(payload.get("data"))
+        return (from_api or from_view)[:16]
+
+    def _bilibili_people(self, view: dict, show: str) -> list:
+        names = []
+        for item in view.get("staff") or []:
+            if not isinstance(item, dict):
+                continue
+            name = (item.get("name") or "").strip()
+            if name and name != show and name not in names:
+                names.append(name)
+        return names[:8]
+
+    def _bilibili_wbi_keys(self) -> tuple:
+        payload = self._bilibili_json_soft("https://api.bilibili.com/x/web-interface/nav")
+        img = ((payload.get("data") or {}).get("wbi_img") or {})
+        return _wbi_filename_key(img.get("img_url") or ""), _wbi_filename_key(img.get("sub_url") or "")
+
+    def _bilibili_subtitle_tracks(self, view: dict, bvid: str, cid: int) -> list:
+        tracks = _subtitle_tracks(view)
+        if _open_subtitle_tracks(tracks):
+            return tracks
+        payload = self._bilibili_json_soft(
+            f"https://api.bilibili.com/x/player/v2?bvid={bvid}&cid={int(cid)}"
+        )
+        tracks = _subtitle_tracks(payload.get("data") or {})
+        if _open_subtitle_tracks(tracks):
+            return tracks
+        img_key, sub_key = self._bilibili_wbi_keys()
+        signed = _sign_wbi({"bvid": bvid, "cid": str(int(cid))}, img_key, sub_key)
+        if not signed:
+            return tracks
+        payload = self._bilibili_json_soft(
+            "https://api.bilibili.com/x/player/wbi/v2?" + urlencode(signed)
+        )
+        wbi_tracks = _subtitle_tracks(payload.get("data") or {})
+        return wbi_tracks or tracks
+
+    def _caption_from_payload(self, payload: dict) -> str:
+        lines = []
+        seen = set()
+        total = 0
+        for item in payload.get("body") or []:
+            if not isinstance(item, dict):
+                continue
+            text = re.sub(r"\s+", " ", _to_simplified((item.get("content") or "").strip())).strip()
+            if len(text) < 2 or text in seen:
+                continue
+            seen.add(text)
+            lines.append(text)
+            total += len(text)
+            if total >= CAPTION_CONTEXT_MAX:
+                break
+        return " ".join(lines)[:CAPTION_CONTEXT_MAX].strip()
+
+    def _bilibili_caption_text(self, view: dict, bvid: str, cid: int) -> str:
+        tracks = _open_subtitle_tracks(self._bilibili_subtitle_tracks(view, bvid, cid))
+        if not tracks:
+            return ""
+        raw = str(tracks[0].get("subtitle_url") or "").strip()
+        if raw.startswith("//"):
+            raw = "https:" + raw
+        if not raw.startswith("https://") and not raw.startswith("http://"):
+            return ""
+        return self._caption_from_payload(self._read_json_url(raw))
+
+    def _bilibili_page_meta(self, view: dict, url: str = "") -> dict:
         owner = view.get("owner") or {}
-        tags = []
-        for item in view.get("tag") or []:
-            if isinstance(item, dict) and item.get("tag_name"):
-                tags.append(str(item["tag_name"]))
-            elif item:
-                tags.append(str(item))
-        return {
-            "show": (owner.get("name") or "").strip(),
-            "description": (view.get("desc") or "").strip(),
+        show = (owner.get("name") or "").strip()
+        bvid = (view.get("bvid") or self._bvid(url) or "").strip()
+        cid, part, page_duration = self._bilibili_target(view, url)
+        tags = self._bilibili_tags(bvid, view) if bvid else self._tag_names(view.get("tag"))[:16]
+        people = self._bilibili_people(view, show)
+        captions = ""
+        # Charge-locked videos still contribute the public view fields.
+        # Their caption files are not pulled.
+        if bvid and cid and not self._bilibili_charge_locked(view):
+            captions = self._bilibili_caption_text(view, bvid, cid)
+        if bvid and cid:
+            self._remember_bili(bvid, cid=cid)
+        logger.info(
+            "B站上下文 tags=%s people=%s part=%s captions=%s",
+            len(tags), len(people), int(bool(part)), len(captions),
+        )
+        meta = {
+            "show": show,
+            "description": self._bilibili_description(view),
             "tags": tags[:16],
+            "part": part,
+            "people": people,
+            "captions": captions,
         }
+        # Page 1 keeps the view duration the rest of the app already uses.
+        # A later part is only as long as that part's audio.
+        if self._bilibili_page_query(url) and page_duration:
+            meta["duration"] = page_duration
+        return meta
 
     def _bilibili_audio_url(self, bvid: str, cid: int) -> str:
         payload = self._bilibili_json(
@@ -1111,9 +1406,13 @@ class VideoProcessor:
                     view = await asyncio.to_thread(self._bilibili_view, bvid)
                     video_title = view.get("title") or video_title
                     video_duration = view.get("duration") or video_duration
-                    page_meta = self._bilibili_page_meta(view)
-                    charge = self._bilibili_charge_locked(view)
                     self._remember_bili(bvid, view=view)
+                    page_meta = await asyncio.to_thread(self._bilibili_page_meta, view, url)
+                    if page_meta.get("duration"):
+                        video_duration = page_meta.pop("duration")
+                    else:
+                        page_meta.pop("duration", None)
+                    charge = self._bilibili_charge_locked(view)
                     logger.info("B站接口已解析: %s", video_title)
                     # Grab the audio URL before yt-dlp. A 412 on the webpage
                     # refreshes the visitor id and must not discard this URL.
@@ -1135,16 +1434,22 @@ class VideoProcessor:
 
             video_title = info.get("title", "unknown")
             video_duration = info.get("duration")
-            page_meta = {
+            scraped = {
                 "show": (
                     info.get("uploader")
                     or info.get("channel")
                     or info.get("creator")
+                    or info.get("series")
+                    or info.get("album")
                     or ""
                 ).strip(),
                 "description": (info.get("description") or "").strip(),
                 "tags": [str(t) for t in (info.get("tags") or []) if t][:16],
             }
+            if self._is_bilibili(url):
+                page_meta = merge_page_meta(page_meta, scraped)
+            else:
+                page_meta = scraped
             charge = await asyncio.to_thread(self._bilibili_is_charge, url, info)
             manual_subs: dict = info.get("subtitles") or {}
             auto_caps: dict = info.get("automatic_captions") or {}
@@ -1416,7 +1721,8 @@ class VideoProcessor:
         return "\n".join(lines)
 
     async def _take_bili_audio(self, bvid: str, view: dict) -> None:
-        cid = view.get("cid")
+        hit = self._recall_bili(bvid)
+        cid = hit.get("cid") or view.get("cid")
         if not cid:
             return
         try:
@@ -1441,10 +1747,12 @@ class VideoProcessor:
         if not title:
             return None
         self._remember_bili(bvid, view=view)
+        page_meta = await asyncio.to_thread(self._bilibili_page_meta, view, url)
+        duration = page_meta.pop("duration", None) or view.get("duration")
         charge = self._bilibili_charge_locked(view)
         if not charge:
             await self._take_bili_audio(bvid, view)
-        return title, view.get("duration"), self._bilibili_page_meta(view), charge
+        return title, duration, page_meta, charge
 
     async def _download_bilibili_api(
         self,
@@ -1463,7 +1771,11 @@ class VideoProcessor:
             self._remember_bili(bvid, view=view)
             hit = self._recall_bili(bvid)
         title = prefetched_title or view.get("title") or "bilibili"
-        cid = view.get("cid")
+        cid = hit.get("cid")
+        if not cid:
+            cid, _part, _page_duration = self._bilibili_target(view, url)
+        if not cid:
+            cid = view.get("cid")
         if not cid:
             raise Exception("暂时无法下载音频")
         audio_url = (hit.get("audio_url") or "").strip()

@@ -1039,6 +1039,9 @@ class JobManager:
                     show=page_meta.get("show") or "",
                     description=page_meta.get("description") or "",
                     tags=page_meta.get("tags") or [],
+                    part=page_meta.get("part") or "",
+                    people=page_meta.get("people") or [],
+                    captions=page_meta.get("captions") or "",
                 )
                 if ctx:
                     self.store.update(task_id, source_context=ctx, flush=True)
