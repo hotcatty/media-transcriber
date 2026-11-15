@@ -14,8 +14,8 @@ import re
 from typing import Iterable, Optional
 
 _LABEL_RE = re.compile(
-    r"(?:嘉宾|飞行嘉宾|特邀嘉宾|常驻嘉宾|主持|主播|制作人|"
-    r"节目|频道|出品|嘉宾主持)[:：]\s*(.+)"
+    r"(嘉宾|飞行嘉宾|特邀嘉宾|常驻嘉宾|主持|主播|制作人|"
+    r"节目|频道|出品|嘉宾主持|分集|标签)[:：]\s*(.+)"
 )
 _QUOTED_RE = re.compile(r"[《「『\"“]([^《」』\"”]{2,20})[》」』\"”]")
 _LATIN_NAME_RE = re.compile(r"\b[A-Z][a-z]{1,20}(?:[ \-][A-Z][a-z]{1,20}){0,3}\b")
@@ -32,9 +32,27 @@ _STOP = {
     "文字", "全文", "转写", "转录", "感谢", "欢迎", "本期", "介绍", "更多",
     "查看", "点击", "搜索", "下载", "免费", "会员", "充电", "原创", "作者",
     "标题", "背景", "来源", "小宇宙", "哔哩哔哩", "小红书", "油管",
+    "就是", "其实", "不是", "已经", "可能", "应该", "这么", "那么",
+    "而且", "或者", "真的", "当然", "不过", "怎么样", "为什么",
 }
 
 HOTWORD_CAP = 24
+
+
+def _caption_body(source_context: str) -> str:
+    lines = []
+    for line in (source_context or "").splitlines():
+        if line.startswith("字幕："):
+            lines.append(line.split("：", 1)[1])
+    return "\n".join(lines)
+
+
+def _without_caption(source_context: str) -> str:
+    lines = [
+        line for line in (source_context or "").splitlines()
+        if not line.startswith("字幕：")
+    ]
+    return "\n".join(lines)
 
 
 def extract_hotwords(
@@ -43,20 +61,25 @@ def extract_hotwords(
     source_context: str = "",
     extra: Optional[Iterable[str]] = None,
 ) -> list[str]:
-    """Deduped proper nouns, longest first, capped so the prompt stays small."""
-    found: list[str] = []
+    """Deduped proper nouns. Names first, then topic tags, then repeats.
 
-    def add(raw: str) -> None:
+    The whisper prompt is trimmed from the end, so names have to lead.
+    """
+    names: list[str] = []
+    topics: list[str] = []
+    repeats: list[str] = []
+
+    def add(bucket: list[str], raw: str) -> None:
         word = _SPACE_RE.sub(" ", (raw or "").strip()).strip(" ·•-—|/")
         if not _usable(word):
             return
-        if word in found:
+        if word in names or word in topics or word in repeats or word in bucket:
             return
-        found.append(word)
+        bucket.append(word)
 
     title = (title or "").strip()
     if title and 2 <= len(title) <= 24:
-        add(title)
+        add(names, title)
     # Shorter names inside the title (王慧文 in 「和王慧文对谈」) are the
     # ones Whisper actually misspells. Keep them when the page repeats them.
     ctx_text = source_context or ""
@@ -67,32 +90,44 @@ def extract_hotwords(
                 if piece[0] in "和与的了在是把被从对":
                     continue
                 if _CJK_TOKEN_RE.fullmatch(piece) and piece in ctx_text:
-                    add(piece)
+                    add(names, piece)
 
     blob = f"{title}\n{source_context or ''}"
     for m in _LABEL_RE.finditer(blob):
-        for part in _SPLIT_RE.split(m.group(1).strip()):
-            add(part.split()[0] if "http" in part else part)
+        bucket = topics if m.group(1) == "标签" else names
+        for part in _SPLIT_RE.split(m.group(2).strip()):
+            add(bucket, part.split()[0] if "http" in part else part)
     for m in _QUOTED_RE.finditer(blob):
-        add(m.group(1))
+        add(names, m.group(1))
     for m in _LATIN_NAME_RE.finditer(blob):
-        add(m.group(0))
+        add(names, m.group(0))
 
     if extra:
         for item in extra:
-            add(item)
+            add(topics, item)
 
-    # Keep unlabeled CJK runs only when they already look like a name-sized
-    # token sitting next to a label we missed (2–4 chars, not a stopword).
-    for token in _CJK_TOKEN_RE.findall(source_context or ""):
-        if 2 <= len(token) <= 4 and token not in _STOP:
-            # Only promote if the same token appears more than once, or was
-            # already captured. Single random adjectives stay out.
-            if (source_context or "").count(token) >= 2:
-                add(token)
+    # Unlabeled CJK runs only when they already look like a name-sized token
+    # (2–4 chars, not a stopword) and the page repeats them. Caption lines are
+    # counted on their own so a spoken name still lands, without letting one
+    # long transcript promote every filler word ahead of the names.
+    body = _without_caption(source_context or "")
+    caption = _caption_body(source_context or "")
+    for token in _CJK_TOKEN_RE.findall(body):
+        if 2 <= len(token) <= 4 and token not in _STOP and body.count(token) >= 2:
+            add(repeats, token)
+    for token in _CJK_TOKEN_RE.findall(caption):
+        if 2 <= len(token) <= 4 and token not in _STOP and caption.count(token) >= 2:
+            add(repeats, token)
 
-    found.sort(key=len, reverse=True)
-    return found[:HOTWORD_CAP]
+    picked: list[str] = []
+    for group in (names, topics, repeats):
+        for word in sorted(group, key=len, reverse=True):
+            if word in picked:
+                continue
+            picked.append(word)
+            if len(picked) >= HOTWORD_CAP:
+                return picked
+    return picked
 
 
 def apply_hotword_fixes(text: str, hotwords: Iterable[str]) -> str:

@@ -617,6 +617,15 @@ def is_cjk_text(text: str, sample: int = 400) -> bool:
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 SOURCE_CONTEXT_MAX = 8000
+# Leave room for the short labeled lines and a caption excerpt.
+DESC_CONTEXT_MAX = 4000
+CAPTION_CONTEXT_MAX = 1200
+
+# Engagement tags that are not topic words. Real names and subjects stay.
+_GENERIC_TAGS = {
+    "日常", "生活", "记录", "分享", "原创", "转载", "搞笑", "高能",
+    "必剪", "转发", "关注", "vlog", "VLOG", "Vlog",
+}
 
 
 def clean_page_text(raw: str) -> str:
@@ -627,23 +636,78 @@ def clean_page_text(raw: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _clean_meta_list(raw) -> list[str]:
+    out: list[str] = []
+    for item in raw or []:
+        text = clean_page_text(str(item or ""))
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def merge_page_meta(primary: Optional[dict], fallback: Optional[dict]) -> dict:
+    """Prefer official fields. Fill only the blanks from a later source."""
+    primary = primary or {}
+    fallback = fallback or {}
+    out: dict = {}
+    for key in ("show", "description", "part", "captions"):
+        first = clean_page_text(str(primary.get(key) or ""))
+        second = clean_page_text(str(fallback.get(key) or ""))
+        out[key] = first or second
+    out["people"] = _clean_meta_list(primary.get("people")) or _clean_meta_list(fallback.get("people"))
+    out["tags"] = _clean_meta_list(primary.get("tags")) or _clean_meta_list(fallback.get("tags"))
+    return out
+
+
 def format_source_context(*, show: str = "", description: str = "",
-                          tags: Optional[list] = None) -> str:
-    """Compact page context persisted on the task for Whisper and copy-for-AI."""
+                          tags: Optional[list] = None, part: str = "",
+                          people: Optional[list] = None,
+                          captions: str = "") -> str:
+    """Compact page context persisted on the task for Whisper and copy-for-AI.
+
+    Empty fields are omitted. The same lines are not written twice.
+    """
     show = clean_page_text(show)
+    part = clean_page_text(part)
     desc = clean_page_text(description)
+    cap = clean_page_text(captions)
     parts: list[str] = []
+
+    def add(line: str) -> None:
+        line = (line or "").strip()
+        if not line or line in parts:
+            return
+        parts.append(line)
+
     if show:
-        parts.append(f"节目：{show}")
+        add(f"节目：{show}")
+    guest_names = []
+    for raw in people or []:
+        name = clean_page_text(str(raw))
+        if name and name != show and name not in guest_names:
+            guest_names.append(name)
+    if guest_names:
+        add("嘉宾：" + "、".join(guest_names[:8]))
+    if part and part not in (show, desc):
+        add(f"分集：{part}")
+    label_tags = []
+    for raw in tags or []:
+        tag = clean_page_text(str(raw))
+        if not tag or tag in (show, part) or tag in _GENERIC_TAGS:
+            continue
+        if not (2 <= len(tag) <= 24):
+            continue
+        if tag not in label_tags:
+            label_tags.append(tag)
+    if label_tags:
+        add("标签：" + "、".join(label_tags[:16]))
     if desc:
         if show and desc.startswith(show):
             desc = desc[len(show):].lstrip(" ：:-—|/|")
-        if desc:
-            parts.append(desc)
-    label_tags = [clean_page_text(str(t)) for t in (tags or []) if t]
-    label_tags = [t for t in label_tags if t and t != show][:16]
-    if label_tags:
-        parts.append("标签：" + "、".join(label_tags))
+        if desc and desc not in (show, part):
+            add(desc[:DESC_CONTEXT_MAX].rstrip())
+    if cap and cap not in desc and cap != show and cap != part:
+        add("字幕：" + cap[:CAPTION_CONTEXT_MAX].rstrip())
     text = "\n".join(parts).strip()
     if len(text) > SOURCE_CONTEXT_MAX:
         text = text[:SOURCE_CONTEXT_MAX].rstrip()
