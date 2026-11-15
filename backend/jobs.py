@@ -57,6 +57,7 @@ from text_utils import (
     safe_filename,
     strip_ansi,
     host_allowed_on_public,
+    whisper_language,
     YOUTUBE_DISABLED_HINT,
     PUBLIC_HOST_HINT,
 )
@@ -1042,6 +1043,11 @@ class JobManager:
                 )
                 if ctx:
                     self.store.update(task_id, source_context=ctx, flush=True)
+                if sub_segs and not self.video._keep_subtitle(
+                    task.source, sub_lang or "", sub_lang or "",
+                ):
+                    logger.info("字幕不是中文，改听音频: %s", sub_lang)
+                    sub_segs = None
                 if sub_segs:
                     segments = sub_segs
                     origin = "subtitle"
@@ -1212,7 +1218,7 @@ class JobManager:
             result = await run_transcription(
                 audio_path,
                 engine=engine,
-                language=language if (language or "").lower().startswith("zh") else None,
+                language=whisper_language(task.source, task.source_type, language),
                 work_dir=config.TEMP_DIR / "chunks" / task_id,
                 partial_path=self.store.partial_path(task_id),
                 cancel_event=cancel,

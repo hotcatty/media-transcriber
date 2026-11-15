@@ -95,6 +95,82 @@ def is_youtube_url(url: str) -> bool:
     return "youtube.com" in u or "youtu.be" in u
 
 
+# Bilibili `lan` values include ai-zh / chs / cht, not only zh-CN.
+_ZH_LANG_EXACT = {
+    "zh",
+    "zh-hans",
+    "zh-cn",
+    "zh-tw",
+    "zh-hant",
+    "ai-zh",
+    "chs",
+    "cht",
+}
+
+
+def lang_key(lang: Optional[str]) -> str:
+    return (lang or "").strip().lower().replace("_", "-")
+
+
+def is_chinese_lang(lang: Optional[str]) -> bool:
+    """Chinese track codes, including Bilibili ai-zh / chs / cht. Case-insensitive."""
+    key = lang_key(lang)
+    if not key:
+        return False
+    if key in _ZH_LANG_EXACT or key.startswith("zh"):
+        return True
+    return key == "ai-zh" or key.startswith("ai-zh-")
+
+
+def is_english_lang(lang: Optional[str]) -> bool:
+    key = lang_key(lang)
+    if not key:
+        return False
+    if key == "en" or key.startswith("en-"):
+        return True
+    return key == "ai-en" or key.startswith("ai-en-")
+
+
+def targets_simplified_chinese(source: str, source_type: str = "") -> bool:
+    """Bilibili, 小宇宙, 小红书, 抖音, 微信, 苹果播客: this product wants 简体中文."""
+    if (source_type or "") == "upload":
+        return False
+    u = (source or "").lower()
+    if not u:
+        return False
+    return any(
+        part in u
+        for part in (
+            "bilibili.com",
+            "b23.tv",
+            "xiaoyuzhou",
+            "xiaohongshu.com",
+            "xhslink.com",
+            "xhslink.cn",
+            "douyin.com",
+            "iesdouyin.com",
+            "weixin.qq.com",
+            "podcasts.apple.com",
+            "itunes.apple.com",
+        )
+    )
+
+
+def whisper_language(
+    source: str,
+    source_type: str = "",
+    language: Optional[str] = None,
+) -> Optional[str]:
+    """Language passed to Whisper / cloud.
+
+    Chinese platforms, and any caller already targeting Chinese, stay on zh so
+    a small model cannot auto-detect English. Other sources keep auto-detect.
+    """
+    if targets_simplified_chinese(source, source_type) or is_chinese_lang(language):
+        return "zh"
+    return None
+
+
 def normalize_xiaohongshu_url(url: str) -> str:
     """www + explore path so yt-dlp's XiaoHongShu extractor matches. Keep xsec_token."""
     raw = extract_share_url(url)

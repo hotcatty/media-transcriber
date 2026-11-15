@@ -20,6 +20,7 @@ from text_utils import (
     CHARGE_VIDEO_HINT,
     DOWNLOAD_FAIL_HINT,
     LOGIN_PARSE_HINT,
+    TEMPORARY_PARSE_HINT,
     bili_block_hint,
     fail_hint_for_task,
     friendly_error,
@@ -112,7 +113,7 @@ class Bilibili412Tests(unittest.TestCase):
         self.assertEqual(av, "https://www.bilibili.com/video/av170001")
         self.assertFalse(vp._bili_input_short)
 
-    def test_mobile_share_url_is_short_and_canonical(self):
+    def test_mobile_share_url_is_full_and_canonical(self):
         vp = _processor()
 
         def hop(_url):
@@ -121,7 +122,104 @@ class Bilibili412Tests(unittest.TestCase):
         vp._one_hop_location = hop
         out = vp.prepare_url(f"https://m.bilibili.com/video/{BV}")
         self.assertEqual(out, FULL)
-        self.assertTrue(vp._bili_input_short)
+        self.assertFalse(vp._bili_input_short)
+
+    def test_full_video_url_variants_canonicalize(self):
+        vp = _processor()
+
+        def hop(_url):
+            raise AssertionError("a URL that already has BV/av must not hop")
+
+        vp._one_hop_location = hop
+        cases = {
+            f"https://m.bilibili.com/video/{BV}": FULL,
+            f"https://m.bilibili.com/video/{BV}/": FULL,
+            f"https://bilibili.com/video/{BV}": FULL,
+            f"https://bilibili.com/video/{BV}/": FULL,
+            f"https://www.bilibili.com/video/{BV}/": FULL,
+            f"https://www.bilibili.com/video/{BV}/?spm_id_from=333.788": FULL,
+            f"https://m.bilibili.com/video/{BV}?spm_id_from=333&p=2": f"{FULL}?p=2",
+            "https://bilibili.com/video/av170001": "https://www.bilibili.com/video/av170001",
+            "https://m.bilibili.com/video/av170001/?vd_source=abc": (
+                "https://www.bilibili.com/video/av170001"
+            ),
+            f"HTTP://Bilibili.com/video/{BV}?foo=1": FULL,
+        }
+        for raw, expected in cases.items():
+            out = vp.prepare_url(raw)
+            self.assertEqual(out, expected, raw)
+            self.assertFalse(vp._bili_input_short, raw)
+
+    def test_unexpanded_short_link_asks_for_full_url(self):
+        vp = _processor()
+
+        def hop(_url):
+            return None
+
+        vp._one_hop_location = hop
+        with self.assertRaises(Exception) as caught:
+            vp.prepare_url("https://b23.tv/abc123")
+        self.assertEqual(str(caught.exception), BILI_SHORT_LINK_HINT)
+        self.assertNotEqual(str(caught.exception), TEMPORARY_PARSE_HINT)
+        self.assertNotIn("412", str(caught.exception))
+
+    def test_noncanonical_share_asks_for_full_url(self):
+        vp = _processor()
+
+        def hop(_url):
+            return "https://www.bilibili.com/"
+
+        vp._one_hop_location = hop
+        with self.assertRaises(Exception) as caught:
+            vp.prepare_url("https://bilibili.com/blackboard/era")
+        self.assertEqual(str(caught.exception), BILI_SHORT_LINK_HINT)
+        self.assertNotEqual(str(caught.exception), TEMPORARY_PARSE_HINT)
+
+    def test_failed_short_link_download_asks_for_full_url(self):
+        vp = _processor()
+
+        def hop(_url):
+            return None
+
+        class Boom:
+            def __init__(self, *_a, **_k):
+                raise AssertionError("yt-dlp should not run when the short link did not expand")
+
+        vp._one_hop_location = hop
+        original_ydl = video_processor.yt_dlp.YoutubeDL
+        video_processor.yt_dlp.YoutubeDL = Boom
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(Exception) as caught:
+                    asyncio.run(vp.download_and_convert("https://b23.tv/abc123", Path(tmp)))
+        finally:
+            video_processor.yt_dlp.YoutubeDL = original_ydl
+        self.assertEqual(str(caught.exception), BILI_SHORT_LINK_HINT)
+        self.assertNotEqual(str(caught.exception), TEMPORARY_PARSE_HINT)
+        self.assertNotIn("登录", str(caught.exception))
+
+    def test_mobile_full_url_412_says_try_later(self):
+        vp = _processor()
+        self.assertEqual(vp.prepare_url(f"https://m.bilibili.com/video/{BV}/?spm_id_from=1"), FULL)
+        self.assertFalse(vp._bili_input_short)
+        api = {"n": 0}
+
+        def urlopen(req, timeout=None):
+            if "finger/spi" in req.full_url:
+                body = json.dumps({"code": 0, "data": {"b_3": "b3", "b_4": "b4"}}).encode()
+                return _Resp(body)
+            api["n"] += 1
+            if api["n"] <= 2:
+                body = json.dumps({"code": -412, "message": "请求被拦截"}).encode()
+                return _Resp(body)
+            raise AssertionError("retried more than once")
+
+        video_processor.urllib.request.urlopen = urlopen
+        with self.assertRaises(Exception) as caught:
+            vp._bilibili_json(f"https://api.bilibili.com/x/web-interface/view?bvid={BV}")
+        self.assertEqual(str(caught.exception), BILI_RISK_HINT)
+        self.assertNotIn("短链", str(caught.exception))
+        self.assertEqual(api["n"], 2)
 
     def test_short_link_412_retries_once_then_asks_for_full_url(self):
         vp = _processor()
