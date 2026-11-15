@@ -136,4 +136,13 @@ class MLXWhisperEngine(TranscriptionEngine):
                 avg_logprob=s.get("avg_logprob"),
             ))
 
-        return ChunkResult(segments=segments, language=result.get("language") or language)
+        probability = result.get("language_probability")
+        try:
+            probability = float(probability) if probability is not None else None
+        except (TypeError, ValueError):
+            probability = None
+        return ChunkResult(
+            segments=segments,
+            language=result.get("language") or language,
+            language_probability=probability,
+        )

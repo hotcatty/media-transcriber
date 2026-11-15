@@ -138,9 +138,15 @@ class FasterWhisperEngine(TranscriptionEngine):
                 avg_logprob=getattr(s, "avg_logprob", None),
             ))
 
+        probability = getattr(info, "language_probability", None)
+        try:
+            probability = float(probability) if probability is not None else None
+        except (TypeError, ValueError):
+            probability = None
         return ChunkResult(
             segments=segments,
             language=getattr(info, "language", None) or language,
+            language_probability=probability,
         )
 
     def unload(self) -> None:

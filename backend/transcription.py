@@ -28,15 +28,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
+import re
+
 import audio as audio_utils
 import config
 import settings_store
 from engines import AudioChunk, Segment, TranscriptionEngine
-from engines.base import whisper_initial_prompt
+from engines.base import ZH_PROMPT, whisper_initial_prompt
 from hotwords import apply_hotword_fixes, extract_hotwords
 from text_utils import to_simplified
 
 logger = logging.getLogger(__name__)
+
+# A silent or VAD-empty chunk often comes back as English around 0.35.
+# Real speech on this model is typically near 1.0. 0.35 must not win.
+LANGUAGE_LOCK_MIN_PROBABILITY = 0.6
+_NO_SPEECH = 0.6
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_SQUASH_RE = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9]+")
 
 
 class Cancelled(Exception):
@@ -153,6 +162,65 @@ def _apply_hotwords(
             w.word = apply_hotword_fixes(w.word, words)
 
 
+def looks_chinese_context(title: Optional[str], source_context: Optional[str]) -> bool:
+    """True when the page title or notes are written in Chinese."""
+    blob = f"{title or ''}\n{source_context or ''}"
+    return len(_CJK_RE.findall(blob)) >= 2
+
+
+def _squash(text: str) -> str:
+    return _SQUASH_RE.sub("", text or "")
+
+
+def _echo_pieces(prompt: Optional[str], hotwords: List[str]) -> list:
+    pieces = []
+    for raw in (prompt, ZH_PROMPT, "专名", *hotwords):
+        piece = _squash(raw or "")
+        if len(piece) >= 2 and piece not in pieces:
+            pieces.append(piece)
+    pieces.sort(key=len, reverse=True)
+    return pieces
+
+
+def is_prompt_dump(text: str, pieces: list) -> bool:
+    """True when the segment is just the hotword prompt, repeated or not."""
+    leftover = _squash(text)
+    if not leftover:
+        return True
+    for piece in pieces:
+        if piece:
+            leftover = leftover.replace(piece, "")
+    return len(leftover) <= 1
+
+
+def without_prompt_dumps(segments: List[Segment], pieces: list) -> List[Segment]:
+    return [s for s in segments if not is_prompt_dump(s.text, pieces)]
+
+
+def has_usable_speech(segments: List[Segment]) -> bool:
+    """False for an empty chunk or one Whisper itself marked as no speech."""
+    if not segments:
+        return False
+    if all(
+        s.no_speech_prob is not None and s.no_speech_prob >= _NO_SPEECH
+        for s in segments
+    ):
+        return False
+    return True
+
+
+def _language_probability(value) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        prob = float(value)
+    except (TypeError, ValueError):
+        return None
+    if prob < 0.0 or prob > 1.0:
+        return None
+    return prob
+
+
 def _preview_of(segments: List[Segment], chars: int = 90) -> Optional[str]:
     if not segments:
         return None
@@ -235,7 +303,18 @@ async def run_transcription(
         all_segments, done_chunks, prior_lang = (
             _load_partial(partial_path) if partial_path else ([], set(), None)
         )
-        detected = language or prior_lang
+        # `language` is an explicit request (only zh is passed in today).
+        # A resumed "en" from a silent first chunk must not stick when the
+        # page itself is Chinese.
+        forced = (language or "").strip() or None
+        chinese = looks_chinese_context(title, source_context)
+        locked = forced
+        if not locked and prior_lang:
+            if chinese and prior_lang.lower().startswith("en"):
+                locked = None
+            else:
+                locked = prior_lang
+        hotwords = extract_hotwords(title=title or "", source_context=source_context or "")
         resumed = sum(c.duration for c in chunks if c.index in done_chunks)
         if done_chunks:
             logger.info(f"resuming: {len(done_chunks)}/{len(chunks)} chunks done "
@@ -295,26 +374,82 @@ async def run_transcription(
                     continue
                 chunk_t0[0] = time.time()
 
-                prompt = whisper_initial_prompt(
-                    detected, source_context=source_context, title=title,
-                )
-                result = engine.transcribe_chunk(
-                    chunk,
-                    language=detected,
-                    word_timestamps=word_timestamps,
-                    condition_on_previous_text=condition_on_previous_text,
-                    initial_prompt=prompt,
-                )
-                if detected is None:
-                    detected = result.language
+                def _decode(lang: Optional[str]):
+                    prompt = whisper_initial_prompt(
+                        lang, source_context=source_context, title=title,
+                    )
+                    decoded = engine.transcribe_chunk(
+                        chunk,
+                        language=lang,
+                        word_timestamps=word_timestamps,
+                        condition_on_previous_text=condition_on_previous_text,
+                        initial_prompt=prompt,
+                    )
+                    pieces = _echo_pieces(prompt, hotwords)
+                    kept_segs = without_prompt_dumps(decoded.segments, pieces)
+                    return decoded, kept_segs
 
-                shifted = [s.shifted(chunk.start) for s in result.segments]
-                _force_simplified(shifted, detected)
+                result, kept = _decode(locked)
+                speech = has_usable_speech(kept)
+                if locked is None:
+                    cand = (result.language or "").strip() or None
+                    prob = _language_probability(result.language_probability)
+                    confident = bool(
+                        speech and cand and (
+                            prob is None or prob >= LANGUAGE_LOCK_MIN_PROBABILITY
+                        )
+                    )
+                    # Chinese page + low-confidence English is the live-replay
+                    # failure (Detected language 'en' with probability 0.35).
+                    # Redo this chunk in Chinese. A confident English detection
+                    # is left alone, including when the title is Chinese.
+                    low_en = bool(
+                        speech
+                        and chinese
+                        and cand
+                        and cand.lower().startswith("en")
+                        and prob is not None
+                        and prob < LANGUAGE_LOCK_MIN_PROBABILITY
+                    )
+                    if not speech:
+                        logger.info(
+                            "not locking language %s prob=%s: chunk has no usable speech",
+                            cand, prob,
+                        )
+                        kept = []
+                    elif low_en:
+                        logger.info(
+                            "ignoring low-confidence en (%.2f) on a Chinese page",
+                            prob,
+                        )
+                        result, kept = _decode("zh")
+                        if has_usable_speech(kept):
+                            locked = "zh"
+                        else:
+                            kept = []
+                    elif speech and cand and cand.lower().startswith("zh") and chinese:
+                        locked = "zh"
+                    elif confident:
+                        # Missing probability plus Chinese context must not
+                        # freeze English before a later chunk can be heard.
+                        if (
+                            prob is None
+                            and chinese
+                            and cand.lower().startswith("en")
+                        ):
+                            pass
+                        else:
+                            locked = cand
+                    # Low confidence without a Chinese page: keep this chunk's
+                    # text, but do not freeze the language for the rest.
+
+                shifted = [s.shifted(chunk.start) for s in kept]
+                _force_simplified(shifted, locked or result.language)
                 _apply_hotwords(shifted, title, source_context)
                 all_segments.extend(shifted)
 
                 if partial_path:
-                    _append_partial(partial_path, chunk.index, shifted, detected)
+                    _append_partial(partial_path, chunk.index, shifted, locked)
 
                 processed += chunk.duration
                 fresh += chunk.duration
@@ -343,7 +478,7 @@ async def run_transcription(
 
         return TranscriptResult(
             segments=all_segments,
-            language=detected,
+            language=locked,
             duration=duration,
             engine_display=engine.info.display,
             engine_backend=engine.info.backend,

@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from email.message import Message
 from pathlib import Path
+import urllib.error
 from urllib.error import HTTPError
 
 import video_processor
@@ -20,6 +21,7 @@ from text_utils import (
     CHARGE_VIDEO_HINT,
     DOWNLOAD_FAIL_HINT,
     LOGIN_PARSE_HINT,
+    TEMPORARY_PARSE_HINT,
     bili_block_hint,
     fail_hint_for_task,
     friendly_error,
@@ -347,6 +349,18 @@ class Bilibili412Tests(unittest.TestCase):
             self.assertFalse(is_charge_gated(text))
         self.assertEqual(friendly_error(BILI_SHORT_LINK_HINT), BILI_SHORT_LINK_HINT)
         self.assertEqual(friendly_error("HTTP Error 412: Precondition Failed"), BILI_RISK_HINT)
+        for raw in (
+            "Request is rejected by server (352)",
+            "Request is blocked by server (401), please wait and try later.",
+            "ERROR: [BiliBili] 1m7WB6mEc9: You have exceeded the rate limit. Try again later",
+            "风控校验失败",
+        ):
+            shown = friendly_error(raw)
+            self.assertEqual(shown, BILI_RISK_HINT)
+            self.assertNotEqual(shown, TEMPORARY_PARSE_HINT)
+            self.assertNotIn("352", shown)
+            self.assertNotIn("401", shown)
+            self.assertFalse(is_login_required(raw))
         self.assertEqual(bili_block_hint(BILI_SHORT_LINK_HINT), BILI_SHORT_LINK_HINT)
         download_hint = fail_hint_for_task(
             "https://b23.tv/abc123", "url", BILI_SHORT_LINK_HINT, "failed", "downloading",
@@ -357,6 +371,202 @@ class Bilibili412Tests(unittest.TestCase):
             FULL, "url", BILI_RISK_HINT, "failed", "downloading",
         )
         self.assertEqual(full_hint, BILI_RISK_HINT)
+
+    def test_videopod_url_is_a_full_video(self):
+        vp = _processor()
+        raw = "https://www.bilibili.com/video/BV1m7WB6mEc9/?spm_id_from=333.788.videopod"
+        out = vp.prepare_url(raw)
+        self.assertEqual(out, "https://www.bilibili.com/video/BV1m7WB6mEc9")
+        self.assertFalse(vp._bili_input_short)
+        self.assertEqual(vp._bvid(out), "BV1m7WB6mEc9")
+
+    def test_412_after_api_resolve_downloads_without_ytdlp(self):
+        """Webpage 412 after the official API already resolved the video.
+
+        The Windows failure showed the generic parse hint. The audio URL from
+        the API must still be used, and yt-dlp must not be asked to download.
+        """
+        vp = _processor()
+        raw = "https://www.bilibili.com/video/BV1m7WB6mEc9/?spm_id_from=333.788.videopod"
+        audio = "https://example.bilivideo.com/43578819134.m4s"
+
+        def urlopen(req, timeout=None):
+            u = req.full_url
+            if "finger/spi" in u:
+                body = json.dumps({"code": 0, "data": {"b_3": "b3", "b_4": "b4"}}).encode()
+                return _Resp(body)
+            if "web-interface/view" in u:
+                body = json.dumps({
+                    "code": 0,
+                    "data": {
+                        "title": "【直播回放】TLW的直播间",
+                        "cid": 43578819134,
+                        "duration": 7217,
+                        "owner": {"name": "知行合一的TLW"},
+                        "desc": "",
+                    },
+                }).encode()
+                return _Resp(body)
+            if "playurl" in u:
+                body = json.dumps({
+                    "code": 0,
+                    "data": {"dash": {"audio": [{"bandwidth": 100, "baseUrl": audio}]}},
+                }).encode()
+                return _Resp(body)
+            raise AssertionError(u)
+
+        class YDL:
+            downloads = 0
+
+            def __init__(self, *_a, **_k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+            def extract_info(self, *_a, **_k):
+                raise Exception(
+                    "ERROR: [BiliBili] 1m7WB6mEc9: Unable to download webpage: "
+                    "HTTP Error 412: Precondition Failed"
+                )
+
+            def download(self, *_a, **_k):
+                YDL.downloads += 1
+                raise AssertionError("yt-dlp must not download after the API resolved audio")
+
+        saved = {}
+
+        def fake_dl(audio_url, dest, *_a, **_k):
+            saved["url"] = audio_url
+            Path(dest).write_bytes(b"m4a")
+            return str(dest)
+
+        video_processor.urllib.request.urlopen = urlopen
+        original_ydl = video_processor.yt_dlp.YoutubeDL
+        original_dl = video_processor.audio_utils.download_audio_url_to_m4a
+        original_sleep = video_processor.asyncio.sleep
+        video_processor.yt_dlp.YoutubeDL = YDL
+        video_processor.audio_utils.download_audio_url_to_m4a = fake_dl
+
+        async def fast(*_a, **_k):
+            return None
+
+        video_processor.asyncio.sleep = fast
+        try:
+            parsed = asyncio.run(vp.fetch_subtitles(raw, Path(tempfile.mkdtemp())))
+            self.assertEqual(parsed[1], "【直播回放】TLW的直播间")
+            self.assertFalse(parsed[4])
+            with tempfile.TemporaryDirectory() as tmp:
+                path, title = asyncio.run(
+                    vp.download_and_convert(raw, Path(tmp), prefetched_title=parsed[1])
+                )
+        finally:
+            video_processor.yt_dlp.YoutubeDL = original_ydl
+            video_processor.audio_utils.download_audio_url_to_m4a = original_dl
+            video_processor.asyncio.sleep = original_sleep
+        self.assertEqual(title, "【直播回放】TLW的直播间")
+        self.assertTrue(str(path).endswith(".m4a"))
+        self.assertEqual(saved["url"], audio)
+        self.assertEqual(YDL.downloads, 0)
+        self.assertNotEqual(friendly_error("HTTP Error 412: Precondition Failed"), TEMPORARY_PARSE_HINT)
+
+    def test_rate_limit_without_title_recovers_via_api(self):
+        vp = _processor()
+        raw = "https://www.bilibili.com/video/BV1m7WB6mEc9/?spm_id_from=333.788.videopod"
+        views = {"n": 0}
+
+        def urlopen(req, timeout=None):
+            u = req.full_url
+            if "finger/spi" in u:
+                body = json.dumps({"code": 0, "data": {"b_3": "b3", "b_4": "b4"}}).encode()
+                return _Resp(body)
+            if "web-interface/view" in u:
+                views["n"] += 1
+                if views["n"] <= 2:
+                    raise urllib.error.URLError("certificate verify failed")
+                body = json.dumps({
+                    "code": 0,
+                    "data": {
+                        "title": "【直播回放】TLW的直播间",
+                        "cid": 11,
+                        "duration": 20,
+                        "owner": {"name": "知行合一的TLW"},
+                    },
+                }).encode()
+                return _Resp(body)
+            if "playurl" in u:
+                body = json.dumps({
+                    "code": 0,
+                    "data": {"dash": {"audio": [{
+                        "bandwidth": 10,
+                        "baseUrl": "https://example.bilivideo.com/a.m4s",
+                    }]}},
+                }).encode()
+                return _Resp(body)
+            raise AssertionError(u)
+
+        class YDL:
+            def __init__(self, *_a, **_k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+            def extract_info(self, *_a, **_k):
+                raise Exception(
+                    "ERROR: [BiliBili] 1m7WB6mEc9: You have exceeded the rate limit. Try again later"
+                )
+
+        video_processor.urllib.request.urlopen = urlopen
+        original_ydl = video_processor.yt_dlp.YoutubeDL
+        original_sleep = video_processor.asyncio.sleep
+        video_processor.yt_dlp.YoutubeDL = YDL
+
+        async def fast(*_a, **_k):
+            return None
+
+        video_processor.asyncio.sleep = fast
+        try:
+            parsed = asyncio.run(vp.fetch_subtitles(raw, Path(tempfile.mkdtemp())))
+        finally:
+            video_processor.yt_dlp.YoutubeDL = original_ydl
+            video_processor.asyncio.sleep = original_sleep
+        self.assertEqual(parsed[1], "【直播回放】TLW的直播间")
+        self.assertGreaterEqual(views["n"], 3)
+        self.assertEqual(vp._recall_bili("BV1m7WB6mEc9").get("audio_url"), "https://example.bilivideo.com/a.m4s")
+        hint = fail_hint_for_task(
+            raw, "url",
+            "You have exceeded the rate limit. Try again later",
+            "failed", "parse",
+        )
+        self.assertEqual(hint, BILI_RISK_HINT)
+        self.assertNotEqual(hint, TEMPORARY_PARSE_HINT)
+
+    def test_api_352_is_risk_hint_not_generic(self):
+        vp = _processor()
+        vp.prepare_url("https://www.bilibili.com/video/BV1m7WB6mEc9")
+        api = {"n": 0}
+
+        def urlopen(req, timeout=None):
+            if "finger/spi" in req.full_url:
+                body = json.dumps({"code": 0, "data": {"b_3": "b3", "b_4": "b4"}}).encode()
+                return _Resp(body)
+            api["n"] += 1
+            body = json.dumps({"code": -352, "message": "风控校验失败"}).encode()
+            return _Resp(body)
+
+        video_processor.urllib.request.urlopen = urlopen
+        with self.assertRaises(Exception) as caught:
+            vp._bilibili_json("https://api.bilibili.com/x/web-interface/view?bvid=BV1m7WB6mEc9")
+        self.assertEqual(str(caught.exception), BILI_RISK_HINT)
+        self.assertNotEqual(str(caught.exception), TEMPORARY_PARSE_HINT)
+        self.assertEqual(api["n"], 2)
 
     def test_charge_rules_unchanged(self):
         vp = _processor()
