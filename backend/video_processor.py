@@ -33,10 +33,14 @@ from text_utils import (
     bili_block_hint,
     extract_share_url,
     is_charge_gated,
+    is_chinese_lang,
     is_douyin_url,
+    is_english_lang,
     is_weixin_url,
     is_xiaohongshu_url,
+    lang_key,
     normalize_xiaohongshu_url,
+    targets_simplified_chinese,
     strip_ansi as _clean,
     to_simplified as _to_simplified,
 )
@@ -335,7 +339,7 @@ class VideoProcessor:
                 self._raise_bili_block("")
 
     def _is_full_bilibili_video_url(self, url: str) -> bool:
-        """True only for https://www.bilibili.com/video/BV… or av…."""
+        """True for a /video/BV… or av… page on bilibili.com, www, or m."""
         raw = extract_share_url(url) or (url or "").strip()
         if not raw:
             return False
@@ -346,10 +350,14 @@ class VideoProcessor:
         except Exception:
             return False
         host = (parsed.hostname or "").lower()
-        if host != "www.bilibili.com":
+        if host not in ("www.bilibili.com", "m.bilibili.com", "bilibili.com"):
             return False
         path = parsed.path or ""
-        return re.search(r"^/video/(?:BV[0-9A-Za-z]+|av\d+)/?$", path, re.I) is not None
+        return re.search(
+            r"^/video/(?:BV[0-9A-Za-z]+|av\d+)/*$",
+            path,
+            re.I,
+        ) is not None
 
     def _avid(self, url: str) -> Optional[str]:
         m = re.search(r"/video/av(\d+)", str(url or ""), re.I)
@@ -423,7 +431,7 @@ class VideoProcessor:
         if canon:
             return canon
         if self._bili_input_short:
-            raise Exception(TEMPORARY_PARSE_HINT)
+            raise Exception(BILI_SHORT_LINK_HINT)
         return current or raw
 
     def prepare_url(self, url: str) -> str:
@@ -907,15 +915,59 @@ class VideoProcessor:
         # YouTube auto zh-Hans is usually a bad machine translation.
         if self._is_youtube(url):
             return en + zh + other
-        return zh + en + other
+        # Bilibili often labels Chinese as ai-zh / chs / cht, not zh-CN.
+        return zh + ["ai-zh", "chs", "cht"] + en + other
+
+    def _ordered_chinese_subs(self, available: dict) -> list:
+        """Chinese tracks only, human codes before Bilibili AI Chinese."""
+        by_key = {}
+        for lang in available:
+            key = lang_key(lang)
+            if key and key not in by_key:
+                by_key[key] = lang
+        ordered = []
+        seen = set()
+        for cand in (
+            "zh-Hans", "zh-CN", "zh-Hant", "zh-TW", "zh", "chs", "cht", "ai-zh",
+        ):
+            key = lang_key(cand)
+            if key in by_key and key not in seen:
+                ordered.append(by_key[key])
+                seen.add(key)
+        for lang in available:
+            key = lang_key(lang)
+            if key and is_chinese_lang(lang) and key not in seen:
+                ordered.append(lang)
+                seen.add(key)
+        return ordered
 
     def _rank_subtitle_langs(self, url: str, available: dict) -> list:
-        ranked = [lang for lang in self._subtitle_priority(url) if lang in available]
+        if self._is_youtube(url):
+            ranked = [lang for lang in self._subtitle_priority(url) if lang in available]
+            return ranked[:3]
+        # Chinese platforms never silently take English or whatever key comes first.
+        if targets_simplified_chinese(url):
+            return self._ordered_chinese_subs(available)[:3]
+        ranked = [
+            lang for lang in self._subtitle_priority(url)
+            if lang in available and not is_english_lang(lang)
+        ]
         if ranked:
             return ranked[:3]
+        for lang in available:
+            if lang and not is_english_lang(lang):
+                return [lang]
+        return []
+
+    def _keep_subtitle(self, url: str, file_lang: str, prefer_lang: str) -> bool:
+        """YouTube may keep English. Everywhere else, English is not a transcript."""
         if self._is_youtube(url):
-            return []
-        return list(available.keys())[:1]
+            return True
+        if is_english_lang(file_lang) or is_english_lang(prefer_lang):
+            return False
+        if targets_simplified_chinese(url):
+            return is_chinese_lang(file_lang) or is_chinese_lang(prefer_lang)
+        return True
 
     async def _ydl_thread(self, fn):
         try:
@@ -1140,6 +1192,9 @@ class VideoProcessor:
                 sub_file = sub_files[0]
                 stem_parts = sub_file.stem.split(".")
                 file_lang = stem_parts[-1] if len(stem_parts) > 1 else prefer_lang
+                if not self._keep_subtitle(url, file_lang, prefer_lang):
+                    logger.info("跳过非中文字幕: %s", file_lang)
+                    continue
                 if sub_file.suffix == ".vtt":
                     entries = self._parse_vtt(str(sub_file))
                 else:

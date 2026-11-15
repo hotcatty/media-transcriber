@@ -204,7 +204,9 @@ ZH_PROMPT = "以下是普通话的转录内容，请使用简体中文，并保�
 
 
 def prompt_for_language(language: Optional[str]) -> Optional[str]:
-    if language and language.lower().startswith("zh"):
+    from text_utils import is_chinese_lang
+
+    if is_chinese_lang(language):
         return ZH_PROMPT
     return None
 

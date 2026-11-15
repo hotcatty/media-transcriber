@@ -34,7 +34,7 @@ import settings_store
 from engines import AudioChunk, Segment, TranscriptionEngine
 from engines.base import whisper_initial_prompt
 from hotwords import apply_hotword_fixes, extract_hotwords
-from text_utils import to_simplified
+from text_utils import is_chinese_lang, to_simplified
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ def _append_partial(path: Path, chunk_index: int, segments: List[Segment],
 
 def _force_simplified(segments: List[Segment], language: Optional[str]) -> None:
     """Whisper emits traditional characters for some speakers; normalise."""
-    if not (language or "").lower().startswith("zh"):
+    if not is_chinese_lang(language):
         return
     for s in segments:
         s.text = to_simplified(s.text)
