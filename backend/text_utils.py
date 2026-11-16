@@ -114,8 +114,34 @@ def normalize_xiaohongshu_url(url: str) -> str:
     return urlunparse(parsed)
 
 
+def bilibili_part_query(url: str) -> str:
+    """Later-part index from a Bilibili ``p`` query. Empty means the first part.
+
+    ``p`` is 1-based. A missing ``p``, ``p=1``, and a non-numeric ``p`` are the
+    first part. ``p=2`` and ``p=02`` are both part 2. Tracking params are ignored.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    try:
+        page = (parse_qs(urlparse(raw).query).get("p") or [""])[0]
+    except Exception:
+        return ""
+    text = str(page).strip()
+    if not text.isdigit():
+        return ""
+    number = int(text)
+    if number <= 1:
+        return ""
+    return str(number)
+
+
 def canonical_source(url: str) -> str:
-    """Stable id for a share link, ignoring tracking params and www."""
+    """Stable id for a share link, ignoring tracking params and www.
+
+    A Bilibili multi-part URL keeps ``p`` when it is not the first part, so
+    P2 of a BV is not the same task as P1.
+    """
     raw = (url or "").strip()
     if not raw:
         return ""
@@ -146,16 +172,20 @@ def canonical_source(url: str) -> str:
             return f"youtube:{vid}"
 
     if host.endswith("bilibili.com"):
+        part = bilibili_part_query(raw)
+        suffix = f":p{part}" if part else ""
         m = re.search(r"(BV[0-9A-Za-z]+)", path)
         if m:
-            return f"bilibili:{m.group(1)}"
+            return f"bilibili:{m.group(1)}{suffix}"
         m = re.search(r"/video/av(\d+)", path, re.I)
         if m:
-            return f"bilibili:av{m.group(1)}"
+            return f"bilibili:av{m.group(1)}{suffix}"
     if host == "b23.tv":
         slug = path.strip("/")
         if slug:
-            return f"b23:{slug}"
+            part = bilibili_part_query(raw)
+            suffix = f":p{part}" if part else ""
+            return f"b23:{slug}{suffix}"
 
     if "xiaoyuzhou" in host:
         m = re.search(r"/episode/([^/?]+)", path)
