@@ -49,6 +49,256 @@ function opNote(event, detail) {
 }
 
 let updatePoll = null;
+let updatePromptDismissed = false;
+let updateNotesShown = null;
+let updatePhase = "";
+let updateConfirming = false;
+
+function isDesktopShell() {
+  return document.documentElement.classList.contains("mt-desktop") || !!window.pywebview;
+}
+
+function releasePageUrl(raw) {
+  const s = String(raw || "").trim();
+  if (!s || /[\s\\]/.test(s)) return "";
+  let u;
+  try { u = new URL(s); } catch (_) { return ""; }
+  if (u.protocol !== "https:" || u.hostname !== "github.com") return "";
+  const path = u.pathname.replace(/\/+$/, "") || "/";
+  if (path.split("/").some((part) => part === ".." || part === ".")) return "";
+  const prefix = "/hotcatty/media-transcriber/releases";
+  if (path !== prefix && path.indexOf(prefix + "/") !== 0) return "";
+  return `https://github.com${path}`;
+}
+
+function openReleasePage(raw) {
+  const target = releasePageUrl(raw);
+  if (!target) return;
+  if (isDesktopShell()) {
+    mtFetch("/api/open-external", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: target }),
+    }).catch(() => {});
+    return;
+  }
+  window.open(target, "_blank", "noopener");
+}
+
+function appendReleaseInline(parent, text) {
+  const re = /\*\*([^*]+)\*\*|\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g;
+  let last = 0;
+  let match = re.exec(text);
+  while (match) {
+    if (match.index > last) parent.appendChild(document.createTextNode(text.slice(last, match.index)));
+    if (match[1]) {
+      const strong = document.createElement("strong");
+      strong.textContent = match[1];
+      parent.appendChild(strong);
+    } else {
+      const href = releasePageUrl(match[3]);
+      if (href) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "link";
+        btn.dataset.externalUrl = href;
+        btn.textContent = match[2];
+        parent.appendChild(btn);
+      } else {
+        parent.appendChild(document.createTextNode(match[2]));
+      }
+    }
+    last = match.index + match[0].length;
+    match = re.exec(text);
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
+function fillReleaseNotes(el, raw) {
+  if (!el) return;
+  const text = String(raw || "").replace(/\r\n/g, "\n").trim();
+  el.replaceChildren();
+  if (!text) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const frag = document.createDocumentFragment();
+  let list = null;
+  const endList = () => {
+    if (!list) return;
+    frag.appendChild(list);
+    list = null;
+  };
+  text.split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      endList();
+      return;
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+    if (heading) {
+      endList();
+      const h = document.createElement("h3");
+      appendReleaseInline(h, heading[2]);
+      frag.appendChild(h);
+      return;
+    }
+    const item = /^[-*]\s+(.*)$/.exec(trimmed);
+    if (item) {
+      if (!list) {
+        list = document.createElement("ul");
+      }
+      const li = document.createElement("li");
+      appendReleaseInline(li, item[1]);
+      list.appendChild(li);
+      return;
+    }
+    endList();
+    const p = document.createElement("p");
+    appendReleaseInline(p, trimmed);
+    frag.appendChild(p);
+  });
+  endList();
+  el.appendChild(frag);
+}
+
+function setUpdateBar(data) {
+  const bar = $("updateBar");
+  const fill = $("updateBarFill");
+  if (!bar || !fill) return;
+  const percent = data && typeof data.percent === "number" ? data.percent : null;
+  const known = percent != null && !Number.isNaN(percent);
+  bar.classList.toggle("is-indeterminate", !known);
+  bar.classList.toggle("is-known", known);
+  if (known) {
+    const clamped = Math.max(0, Math.min(100, percent));
+    fill.style.width = `${clamped}%`;
+    bar.setAttribute("aria-valuenow", String(Math.round(clamped)));
+  } else {
+    fill.style.width = "";
+    bar.removeAttribute("aria-valuenow");
+  }
+}
+
+function paintUpdateBanner(data) {
+  const banner = $("updateStatus");
+  if (!banner) return;
+  const phase = (data && data.phase) || "";
+  const message = (data && data.message) || "";
+  const show = !!message && phase !== "checking" && phase !== "idle" && phase !== "available";
+  banner.hidden = !show;
+  banner.textContent = show ? message : "";
+}
+
+function paintUpdateLink(data) {
+  const link = $("updateLink");
+  if (!link) return;
+  const phase = (data && data.phase) || "";
+  const prompt = !!(data && data.prompt);
+  const showLink = !!(data && data.newer && data.url) && (
+    prompt
+      ? phase !== "checking"
+      : phase !== "downloading" && phase !== "applying" && phase !== "staged"
+  );
+  if (showLink) {
+    link.dataset.url = data.url;
+    link.hidden = false;
+    return;
+  }
+  if (!data || !data.newer || phase === "checking" || phase === "downloading" || phase === "applying" || phase === "staged") {
+    link.hidden = true;
+  }
+}
+
+function updateModalOpen() {
+  const overlay = $("updateOverlay");
+  return !!(overlay && !overlay.hidden);
+}
+
+function paintUpdatePrompt(data) {
+  const phase = (data && data.phase) || "";
+  const busy = phase === "downloading" || phase === "applying";
+  const offer = phase === "available" || phase === "failed" || phase === "staged" || busy;
+  if (!data || !data.prompt || (!data.newer && !busy && phase !== "staged")) {
+    if (updateModalOpen()) closeOverlay("updateOverlay");
+    paintUpdateBanner(data);
+    return;
+  }
+  if (!offer || phase === "checking") {
+    paintUpdateBanner(data);
+    return;
+  }
+  if (updatePromptDismissed && !updateModalOpen()) {
+    paintUpdateBanner(data);
+    return;
+  }
+  const notesEl = $("updateNotes");
+  const notes = data.notes || "";
+  if (notes !== updateNotesShown) {
+    fillReleaseNotes(notesEl, notes);
+    updateNotesShown = notes;
+  }
+  const progress = $("updateProgress");
+  const bar = $("updateBar");
+  const label = $("updateBarLabel");
+  const confirm = $("updateConfirm");
+  const showProgress = busy || phase === "staged" || phase === "failed";
+  if (progress) progress.hidden = !showProgress;
+  if (bar) bar.hidden = !busy && phase !== "staged";
+  if (showProgress) setUpdateBar(phase === "failed" ? { percent: null } : data);
+  if (label) label.textContent = data.message || (busy ? "正在更新，可以继续使用。" : "");
+  if (confirm) {
+    confirm.hidden = busy || phase === "staged";
+    confirm.disabled = false;
+    confirm.textContent = "更新";
+  }
+  const banner = $("updateStatus");
+  if (banner) {
+    banner.hidden = true;
+    banner.textContent = "";
+  }
+  openOverlay("updateOverlay");
+}
+
+function dismissUpdatePrompt() {
+  updatePromptDismissed = true;
+  closeOverlay("updateOverlay");
+  paintUpdateStatus();
+}
+
+function confirmDesktopUpdate() {
+  if (updateConfirming || updatePhase === "downloading" || updatePhase === "applying" || updatePhase === "staged") return;
+  updateConfirming = true;
+  updatePromptDismissed = false;
+  const progress = $("updateProgress");
+  const bar = $("updateBar");
+  const confirm = $("updateConfirm");
+  if (progress) progress.hidden = false;
+  if (bar) bar.hidden = false;
+  setUpdateBar({ percent: null });
+  const label = $("updateBarLabel");
+  if (label && !label.textContent) label.textContent = "正在更新，大约还需几分钟。可以继续使用。";
+  if (confirm) confirm.hidden = true;
+  openOverlay("updateOverlay");
+  mtFetch("/api/update", { method: "POST" }).catch(() => {}).then(() => {
+    updateConfirming = false;
+    paintUpdateStatus();
+  });
+}
+
+function applyUpdatePayload(data) {
+  const body = data || {};
+  updatePhase = body.phase || "";
+  paintUpdateLink(body);
+  if (body.prompt && isLocalHelper()) paintUpdatePrompt(body);
+  else {
+    if (updateModalOpen()) closeOverlay("updateOverlay");
+    paintUpdateBanner(body);
+  }
+  const busy = updatePhase === "checking" || updatePhase === "downloading" || updatePhase === "applying";
+  if (busy) updatePoll = setTimeout(paintUpdateStatus, 800);
+}
 
 function paintUpdateStatus() {
   if (!isLocalHelper()) return;
@@ -57,27 +307,7 @@ function paintUpdateStatus() {
     updatePoll = null;
   }
   mtFetch("/api/update").then((r) => r.json()).then((data) => {
-    const banner = $("updateStatus");
-    const link = $("updateLink");
-    const phase = (data && data.phase) || "";
-    const message = (data && data.message) || "";
-    const busy = phase === "checking" || phase === "downloading" || phase === "applying";
-    if (banner) {
-      const show = !!message && phase !== "checking" && phase !== "idle";
-      banner.hidden = !show;
-      banner.textContent = show ? message : "";
-    }
-    if (link) {
-      const showLink = !!(data && data.newer && data.url)
-        && phase !== "downloading" && phase !== "applying" && phase !== "staged";
-      if (showLink) {
-        link.href = data.url;
-        link.hidden = false;
-      } else if (busy || phase === "staged") {
-        link.hidden = true;
-      }
-    }
-    if (busy) updatePoll = setTimeout(paintUpdateStatus, 1000);
+    applyUpdatePayload(data);
   }).catch(() => {});
 }
 
@@ -1736,6 +1966,24 @@ document.addEventListener("DOMContentLoaded", () => {
     await loadHistory();
     openOverlay("historyOverlay");
   };
+  const updateLink = $("updateLink");
+  if (updateLink) {
+    updateLink.onclick = (e) => {
+      e.preventDefault();
+      openReleasePage(updateLink.dataset.url || "");
+    };
+  }
+  if ($("updateClose")) $("updateClose").onclick = () => dismissUpdatePrompt();
+  if ($("updateConfirm")) $("updateConfirm").onclick = () => confirmDesktopUpdate();
+  const updateNotes = $("updateNotes");
+  if (updateNotes) {
+    updateNotes.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-external-url]");
+      if (!btn) return;
+      e.preventDefault();
+      openReleasePage(btn.getAttribute("data-external-url") || "");
+    });
+  }
   paintServiceGuide();
   $("historyClose").onclick = () => closeOverlay("historyOverlay");
   $("loginClose").onclick = () => closeOverlay("loginOverlay");
@@ -1810,6 +2058,7 @@ document.addEventListener("DOMContentLoaded", () => {
     ov.addEventListener("click", (e) => {
       if (e.target !== ov) return;
       if (ov.id === "transcriptOverlay") backFromSheet();
+      else if (ov.id === "updateOverlay") dismissUpdatePrompt();
       else ov.hidden = true;
     });
   });

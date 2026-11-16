@@ -248,6 +248,226 @@ class WindowTests(unittest.TestCase):
         self.assertNotIn("本机服务没有起来", text)
 
 
+class ModeTests(unittest.TestCase):
+    def setUp(self):
+        self._saved = {
+            key: os.environ.get(key)
+            for key in ("MT_AUTO_UPDATE", "MT_UPDATE_PROMPT", "MT_TEMP_DIR")
+        }
+        app_update.reset_for_tests()
+
+    def tearDown(self):
+        for key, old in self._saved.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+        app_update.reset_for_tests()
+
+    def _root(self):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        os.environ["MT_TEMP_DIR"] = str(tmp / "temp")
+        return tmp
+
+    def _opener(self, calls, notes, payload=None, html_url=None):
+        body = payload if payload is not None else _zip_bytes()
+
+        def opener(req: Request, timeout):
+            calls.append(req.full_url)
+            if "releases/latest" in req.full_url:
+                raw = json.dumps({
+                    "tag_name": "v1.4.0",
+                    "body": notes,
+                    "html_url": html_url or "https://github.com/hotcatty/media-transcriber/releases/tag/v1.4.0",
+                }).encode()
+                return _Body(raw)
+            return _Body(body, chunk=2048, delay=0)
+
+        return opener
+
+    def test_mac_prompt_returns_notes_and_does_not_download_until_confirm(self):
+        self._root()
+        os.environ["MT_UPDATE_PROMPT"] = "1"
+        os.environ.pop("MT_AUTO_UPDATE", None)
+        calls = []
+        notes = "## 安装方式\n**Mac**\n- 在应用里更新\n"
+        opener = self._opener(calls, notes)
+        checked = app_update.status_for_request(
+            "1.3.1", local=True, opener=opener, background=False,
+        )
+        self.assertTrue(checked["prompt"])
+        self.assertEqual(checked["phase"], "available")
+        self.assertTrue(checked["newer"])
+        self.assertEqual(checked["notes"], notes)
+        self.assertEqual(
+            checked["url"],
+            "https://github.com/hotcatty/media-transcriber/releases/tag/v1.4.0",
+        )
+        self.assertFalse(any("/zip/" in url for url in calls))
+        self.assertIsNone(checked["percent"])
+
+        started = app_update.confirm_for_request(
+            "1.3.1", local=True, opener=opener, background=False,
+        )
+        self.assertTrue(started["prompt"])
+        self.assertEqual(started["phase"], "staged")
+        self.assertEqual(started["notes"], notes)
+        self.assertEqual(started["percent"], 100.0)
+        self.assertIn("可以继续使用", started["message"])
+        self.assertEqual(sum("/zip/" in url for url in calls), 1)
+
+    def test_confirm_shows_downloading_before_a_slow_transfer_finishes(self):
+        self._root()
+        os.environ["MT_UPDATE_PROMPT"] = "1"
+        os.environ.pop("MT_AUTO_UPDATE", None)
+        gate = threading.Event()
+        calls = []
+
+        def opener(req: Request, timeout):
+            calls.append(req.full_url)
+            if "releases/latest" in req.full_url:
+                raw = json.dumps({
+                    "tag_name": "v1.4.0",
+                    "body": "慢速更新",
+                    "html_url": "https://github.com/hotcatty/media-transcriber/releases/tag/v1.4.0",
+                }).encode()
+                return _Body(raw)
+            gate.wait(5)
+            return _Body(_zip_bytes())
+
+        checked = app_update.status_for_request(
+            "1.3.1", local=True, opener=opener, background=False,
+        )
+        self.assertEqual(checked["phase"], "available")
+        started = app_update.confirm_for_request(
+            "1.3.1", local=True, opener=opener, background=True,
+        )
+        self.assertTrue(started["prompt"])
+        self.assertEqual(started["phase"], "downloading")
+        self.assertEqual(started["notes"], "慢速更新")
+        self.assertIsNone(started["percent"])
+        self.assertIn("正在更新", started["message"])
+        gate.set()
+        phase = started["phase"]
+        for _ in range(50):
+            if phase in ("staged", "failed"):
+                break
+            time.sleep(0.05)
+            phase = app_update.status_for_request(
+                "1.3.1", local=True, background=False,
+            )["phase"]
+        self.assertEqual(phase, "staged")
+
+    def test_windows_auto_still_downloads_without_a_prompt(self):
+        self._root()
+        os.environ["MT_AUTO_UPDATE"] = "1"
+        os.environ.pop("MT_UPDATE_PROMPT", None)
+        calls = []
+        notes = "Windows 打开后自动同步"
+        opener = self._opener(calls, notes)
+        data = app_update.status_for_request(
+            "1.3.1", local=True, opener=opener, background=False,
+        )
+        self.assertFalse(data["prompt"])
+        self.assertEqual(data["phase"], "staged")
+        self.assertEqual(data["notes"], notes)
+        self.assertTrue(any("/zip/" in url for url in calls))
+        again = app_update.confirm_for_request(
+            "1.3.1", local=True, opener=opener, background=False,
+        )
+        self.assertFalse(again["prompt"])
+        self.assertEqual(sum("/zip/" in url for url in calls), 1)
+
+    def test_prompt_wins_when_both_flags_are_set(self):
+        self._root()
+        os.environ["MT_AUTO_UPDATE"] = "1"
+        os.environ["MT_UPDATE_PROMPT"] = "1"
+        calls = []
+        opener = self._opener(calls, "notes")
+        data = app_update.status_for_request(
+            "1.3.1", local=True, opener=opener, background=False,
+        )
+        self.assertTrue(data["prompt"])
+        self.assertEqual(data["phase"], "available")
+        self.assertFalse(any("/zip/" in url for url in calls))
+
+    def test_public_and_non_local_stay_idle(self):
+        calls = []
+        opener = self._opener(calls, "should not load")
+        os.environ["MT_UPDATE_PROMPT"] = "1"
+        data = app_update.status_for_request(
+            "1.3.1", local=False, opener=opener, background=False,
+        )
+        self.assertFalse(data["prompt"])
+        self.assertFalse(data["newer"])
+        self.assertEqual(data["notes"], "")
+        self.assertEqual(data["phase"], "idle")
+        self.assertEqual(calls, [])
+        confirmed = app_update.confirm_for_request(
+            "1.3.1", local=False, opener=opener, background=False,
+        )
+        self.assertEqual(confirmed["phase"], "idle")
+        self.assertEqual(calls, [])
+
+    def test_link_only_check_includes_notes_and_does_not_download(self):
+        os.environ.pop("MT_AUTO_UPDATE", None)
+        os.environ.pop("MT_UPDATE_PROMPT", None)
+        calls = []
+        notes = "只显示链接"
+        opener = self._opener(calls, notes)
+        data = app_update.status_for_request(
+            "1.3.1", local=True, opener=opener, background=False,
+        )
+        self.assertFalse(data["prompt"])
+        self.assertTrue(data["newer"])
+        self.assertEqual(data["phase"], "idle")
+        self.assertEqual(data["notes"], notes)
+        self.assertFalse(any("/zip/" in url for url in calls))
+
+    def test_unknown_size_has_no_percent(self):
+        self.assertIsNone(app_update.progress_percent(0, None))
+        self.assertEqual(app_update.progress_percent(50, 200), 25.0)
+        self.assertEqual(app_update.progress_percent(500, 200), 100.0)
+
+    def test_release_page_opens_in_the_system_browser(self):
+        seen = []
+        page = "https://github.com/hotcatty/media-transcriber/releases/latest"
+        self.assertTrue(app_update.open_release_page(page, runner=seen.append))
+        self.assertEqual(seen[0][-1], page)
+        self.assertNotIn("shell=True", seen[0])
+        self.assertFalse(app_update.open_release_page("javascript:alert(1)", runner=seen.append))
+        self.assertFalse(app_update.open_release_page(
+            "https://evil.example/hotcatty/media-transcriber/releases/latest",
+            runner=seen.append,
+        ))
+        self.assertFalse(app_update.open_release_page(
+            "https://github.com/hotcatty/media-transcriber/issues/1",
+            runner=seen.append,
+        ))
+        self.assertEqual(len(seen), 1)
+
+    def test_bad_release_url_falls_back_to_the_known_page(self):
+        calls = []
+
+        def opener(req: Request, timeout):
+            calls.append(req.full_url)
+            raw = json.dumps({
+                "tag_name": "v9.0.0",
+                "body": "notes",
+                "html_url": "https://example.com/releases/latest",
+            }).encode()
+            return _Body(raw)
+
+        os.environ["MT_UPDATE_PROMPT"] = "1"
+        data = app_update.status_for_request(
+            "1.3.1", local=True, opener=opener, background=False,
+        )
+        self.assertEqual(data["notes"], "notes")
+        self.assertEqual(data["url"], "https://github.com/hotcatty/media-transcriber/releases/latest")
+
+
 class LaunchOrderTests(unittest.TestCase):
     def test_mac_cold_start_does_not_download_before_the_window(self):
         text = LAUNCHER.read_text(encoding="utf-8")
@@ -283,6 +503,34 @@ class LaunchOrderTests(unittest.TestCase):
         slow = text.split("# SLOW_PATH_START", 1)[1].split("# SLOW_PATH_END", 1)[0]
         self.assertLess(slow.index("Open-DesktopWindow"), slow.index("Ensure-Uv"))
         self.assertIn("Test-ServerPidAlive", text)
+
+    def test_mac_waits_for_the_popup_and_windows_still_auto_syncs(self):
+        mac = LAUNCHER.read_text(encoding="utf-8")
+        win = WINDOWS.read_text(encoding="utf-8")
+        self.assertIn("export MT_UPDATE_PROMPT=1", mac)
+        self.assertIn("unset MT_AUTO_UPDATE", mac)
+        self.assertNotIn("export MT_AUTO_UPDATE=1", mac)
+        self.assertIn('$env:MT_AUTO_UPDATE = "1"', win)
+        self.assertIn("Remove-Item Env:MT_UPDATE_PROMPT", win)
+        self.assertNotIn("$env:MT_UPDATE_PROMPT", win)
+
+    def test_update_popup_is_local_and_the_link_does_not_navigate_the_window(self):
+        html = (ROOT / "static/index.html").read_text(encoding="utf-8")
+        js = (ROOT / "static/app.js").read_text(encoding="utf-8")
+        main = (ROOT / "backend/main.py").read_text(encoding="utf-8")
+        self.assertIn('id="updateTitle">有新版本</h2>', html)
+        self.assertIn('id="updateConfirm">更新</button>', html)
+        self.assertIn('class="update-gh"', html)
+        self.assertIn("<span>有新版本</span>", html)
+        self.assertNotIn('id="updateLink" hidden target="_blank"', html)
+        self.assertIn("if (body.prompt && isLocalHelper())", js)
+        self.assertIn("function confirmDesktopUpdate()", js)
+        self.assertIn("/api/open-external", js)
+        self.assertIn("isLocalHelper()", js)
+        self.assertIn("status_for_request", main)
+        self.assertIn("confirm_for_request", main)
+        self.assertIn("open_release_page", main)
+        self.assertIn("not config.PUBLIC_WEB", main)
 
 
 if __name__ == "__main__":

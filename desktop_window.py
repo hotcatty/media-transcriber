@@ -136,6 +136,9 @@ def main() -> int:
         width=1200,
         height=800,
         min_size=(720, 520),
+        # Black matches the space page. Do not load GitHub inside this webview:
+        # replacing the page leaves the window black. 「有新版本」 calls
+        # /api/open-external, which opens the release page in the system browser.
         background_color="#000000",
     )
     icon = _icon_path()

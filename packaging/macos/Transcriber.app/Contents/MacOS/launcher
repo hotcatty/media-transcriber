@@ -1,6 +1,6 @@
 #!/bin/bash
 # 猫听转文字 · 本机助手
-# 双击先打开已经装好的本机版本。更新只在窗口可用之后在后台进行。
+# 双击先打开已经装好的本机版本。有新版本时在窗口里确认后再下载。
 # 不要用 osascript：未公证的 app 会因此弹出「脚本编辑器」，看起来像没打开。
 set -u
 
@@ -128,8 +128,9 @@ say_ready() {
 
 export MT_HOST="127.0.0.1"
 export MT_PORT="$PORT"
-# The server checks for updates only after the window is usable.
-export MT_AUTO_UPDATE=1
+# 有新版本时在窗口里确认后再下载，不在后台自动下载。
+unset MT_AUTO_UPDATE
+export MT_UPDATE_PROMPT=1
 export MT_TEMP_DIR="$DATA/temp"
 export MT_COOKIE_FILE="$DATA/cookies.txt"
 export MT_MODELS_DIR="${HOME}/.cache/media-transcriber/models"
