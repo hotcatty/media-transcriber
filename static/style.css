@@ -108,6 +108,87 @@ body {
   padding: 14px 18px;
 }
 
+.update-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.update-gh {
+  width: 16px;
+  height: 16px;
+  display: block;
+  flex: none;
+}
+
+.update-notes {
+  max-height: min(360px, 46vh);
+  overflow: auto;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.update-notes[hidden] { display: none !important; }
+.update-notes h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+.update-notes p,
+.update-notes ul { margin: 0; }
+.update-notes ul { padding-left: 1.2em; }
+.update-notes li + li { margin-top: 4px; }
+.update-notes .link {
+  font-size: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.update-progress[hidden] { display: none !important; }
+.update-bar-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+.update-bar-fill {
+  height: 100%;
+  width: 0;
+  background: #000;
+  border-radius: inherit;
+}
+.update-bar.is-known .update-bar-fill {
+  transition: width 0.25s linear;
+}
+.update-bar.is-indeterminate .update-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 35%;
+  animation: update-indet 1.2s ease-in-out infinite;
+}
+@keyframes update-indet {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+.update-bar-label {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink-60);
+}
+#updateConfirm { align-self: flex-start; }
+#updateOverlay .modal { width: min(640px, 100%); }
+
 .beian {
   position: fixed;
   left: 0;

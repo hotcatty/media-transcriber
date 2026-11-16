@@ -1,7 +1,9 @@
-"""Background update for the local Mac/Windows helper.
+"""Update check for the local Mac/Windows helper.
 
-The window must already be usable before this runs. A slow download updates
-the status line; it does not close the app or report that the app failed to open.
+The window must already be usable before this runs. Windows (MT_AUTO_UPDATE)
+may download in the background. Mac (MT_UPDATE_PROMPT) only checks, then
+downloads after the in-app confirmation. A slow download updates the open
+window; it does not close the app or report that the app failed to open.
 There is no overall download deadline.
 """
 from __future__ import annotations
@@ -9,10 +11,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import shutil
+import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -36,7 +41,18 @@ _manager: Optional["UpdateManager"] = None
 _manager_lock = threading.Lock()
 
 
+def prompt_update_enabled() -> bool:
+    """Mac helper: show the release notes and wait for 「更新」."""
+    return os.getenv("MT_UPDATE_PROMPT", "") == "1"
+
+
 def auto_update_enabled() -> bool:
+    """Windows helper: download a newer release without asking.
+
+    Prompt mode wins if both are set, so a Mac launch cannot silently download.
+    """
+    if prompt_update_enabled():
+        return False
     return os.getenv("MT_AUTO_UPDATE", "") == "1"
 
 
@@ -104,6 +120,8 @@ def progress_message(phase: str, eta_seconds: Optional[float] = None) -> str:
     if phase == "downloading":
         return f"正在更新，{format_eta(eta_seconds)}。可以继续使用。"
     if phase == "applying":
+        if eta_seconds is None:
+            return "正在换上新版本。"
         return f"正在换上新版本，{format_eta(eta_seconds)}。"
     if phase == "staged":
         return "更新已下载，下次打开会自动换上。现在可以继续使用。"
@@ -112,18 +130,104 @@ def progress_message(phase: str, eta_seconds: Optional[float] = None) -> str:
     return ""
 
 
+def progress_percent(received: int, total: Optional[int]) -> Optional[float]:
+    if total is None:
+        return None
+    try:
+        total_n = int(total)
+        got = int(received or 0)
+    except (TypeError, ValueError):
+        return None
+    if total_n <= 0:
+        return None
+    return round(max(0.0, min(100.0, got * 100.0 / total_n)), 1)
+
+
 def idle_payload(current: str) -> dict:
     return {
         "current": current,
         "latest": current,
         "newer": False,
         "url": "",
+        "notes": "",
+        "prompt": False,
         "phase": "idle",
         "message": "",
         "eta_seconds": None,
         "received": 0,
         "total": None,
+        "percent": None,
     }
+
+
+_RELEASE_PREFIX = "/hotcatty/media-transcriber/releases"
+
+
+def release_page_url(url: str) -> str:
+    """https GitHub release page for this repo, or empty when it is not one."""
+    raw = (url or "").strip()
+    if not raw or any(ch in raw for ch in "\r\n\t \\") or len(raw) > 500:
+        return ""
+    parts = urllib.parse.urlsplit(raw)
+    if parts.scheme != "https" or parts.netloc != "github.com":
+        return ""
+    if parts.username or parts.password:
+        return ""
+    segments = [seg for seg in parts.path.split("/") if seg != ""]
+    if ".." in segments or "." in segments:
+        return ""
+    path = "/" + "/".join(segments)
+    prefix = _RELEASE_PREFIX
+    if path != prefix and not path.startswith(prefix + "/"):
+        return ""
+    return urllib.parse.urlunsplit(("https", "github.com", path, "", ""))
+
+
+def open_release_page(url: str, runner: Optional[Callable[[list], object]] = None) -> bool:
+    """Open a release page in the system browser. Never navigates the app window."""
+    safe = release_page_url(url)
+    if not safe:
+        return False
+    system = os.getenv("MT_OPEN_PLATFORM") or platform.system()
+    if system == "Darwin":
+        cmd = ["/usr/bin/open", safe]
+    elif system == "Windows":
+        cmd = ["cmd", "/c", "start", "", safe]
+    else:
+        cmd = ["xdg-open", safe]
+    if runner is not None:
+        runner(cmd)
+        return True
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        logger.info("open release page failed: %s", exc)
+        return False
+    return True
+
+
+def fetch_release(opener: Optional[_OPENER], timeout: float) -> tuple[str, str, str]:
+    """Latest tag, release page, and the release body written at publish time."""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/releases/latest",
+        headers={
+            "User-Agent": "media-transcriber",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    open_fn = opener or urllib.request.urlopen
+    with open_fn(req, timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8", "replace"))
+    if not isinstance(data, dict):
+        raise RuntimeError("missing release")
+    tag = str(data.get("tag_name") or "").strip().lstrip("v")
+    if not tag:
+        raise RuntimeError("missing tag")
+    notes = str(data.get("body") or "").replace("\r\n", "\n")
+    if len(notes) > 200_000:
+        notes = notes[:200_000]
+    page = release_page_url(str(data.get("html_url") or "")) or config.UPDATE_URL
+    return tag, page, notes
 
 
 def zip_urls(tag: str) -> list[str]:
@@ -188,11 +292,15 @@ class UpdateManager:
         self._opener = opener
         self._lock = threading.Lock()
         self._started = False
+        self._confirmed = False
+        self._download_started = False
+        self._release = (current, "", "")
         self._state = {
             "phase": "idle",
             "latest": current,
             "newer": False,
             "url": "",
+            "notes": "",
             "message": "",
             "eta_seconds": None,
             "received": 0,
@@ -206,19 +314,44 @@ class UpdateManager:
         if isinstance(eta, float):
             eta = round(eta, 1)
         latest = state.get("latest") or self.current
+        received = int(state.get("received") or 0)
+        total = state.get("total")
         return {
             "current": self.current,
             "latest": latest,
             "newer": bool(state.get("newer")),
             "url": state.get("url") or "",
+            "notes": state.get("notes") or "",
+            "prompt": False,
             "phase": state.get("phase") or "idle",
             "message": state.get("message") or "",
             "eta_seconds": eta,
-            "received": int(state.get("received") or 0),
-            "total": state.get("total"),
+            "received": received,
+            "total": total,
+            "percent": progress_percent(received, total),
         }
 
-    def ensure_started(self) -> dict:
+    def _spawn(self, target: Callable[[], None], background: bool) -> None:
+        if background:
+            threading.Thread(target=target, name="mt-update", daemon=True).start()
+            return
+        target()
+
+    def ensure_started(self, *, background: bool = True) -> dict:
+        """Windows path: check and download without waiting for a click."""
+        start = False
+        with self._lock:
+            self._confirmed = True
+            if not self._started:
+                self._started = True
+                self._state["phase"] = "checking"
+                start = True
+        if start:
+            self._spawn(lambda: self.run(download=True), background)
+        return self.snapshot()
+
+    def ensure_checked(self, *, background: bool = True) -> dict:
+        """Mac path: look up the release notes and do not download yet."""
         start = False
         with self._lock:
             if not self._started:
@@ -226,7 +359,37 @@ class UpdateManager:
                 self._state["phase"] = "checking"
                 start = True
         if start:
-            threading.Thread(target=self.run, name="mt-update", daemon=True).start()
+            self._spawn(lambda: self.run(download=False), background)
+        return self.snapshot()
+
+    def start_download(self, *, background: bool = True) -> dict:
+        """Begin the download the user just confirmed. Safe to call twice."""
+        launch_run = False
+        launch_dl = False
+        with self._lock:
+            self._confirmed = True
+            phase = self._state.get("phase") or "idle"
+            if phase in ("downloading", "applying", "staged"):
+                pass
+            elif not self._started:
+                self._started = True
+                self._state["phase"] = "checking"
+                launch_run = True
+            elif phase in ("available", "failed") and not self._download_started:
+                self._download_started = True
+                # Flip before the response returns so the popup can show a bar
+                # and keep polling. The worker fills in real byte counts.
+                self._state["phase"] = "downloading"
+                self._state["message"] = progress_message("downloading", None)
+                self._state["eta_seconds"] = None
+                self._state["received"] = 0
+                self._state["total"] = None
+                launch_dl = True
+        if launch_run:
+            self._spawn(lambda: self.run(download=True), background)
+        elif launch_dl:
+            latest, page, notes = self._release
+            self._spawn(lambda: self._download_guard(latest, page, notes), background)
         return self.snapshot()
 
     def _set(self, **fields) -> None:
@@ -238,14 +401,19 @@ class UpdateManager:
             return self._opener(req, timeout)
         return urllib.request.urlopen(req, timeout=timeout)
 
-    def run(self) -> None:
-        """Check, then download when a newer release exists. Never raises to the UI."""
+    def run(self, download: bool = True) -> None:
+        """Check GitHub. Download only when `download` is set or the user confirmed.
+
+        Never raises to the UI. `download=True` is the Windows path and the
+        historical default used by callers that stage an update immediately.
+        """
         try:
-            latest, page = self.fetch_latest()
+            latest, page, notes = self.fetch_latest()
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
             logger.info("update check skipped: %s", exc)
-            self._set(phase="idle", newer=False, message="", eta_seconds=None)
+            self._set(phase="idle", newer=False, message="", notes="", eta_seconds=None)
             return
+        self._release = (latest, page, notes)
         newer = version_newer(latest, self.current)
         if not newer:
             self._set(
@@ -253,6 +421,7 @@ class UpdateManager:
                 latest=latest,
                 newer=False,
                 url="",
+                notes="",
                 message="",
                 eta_seconds=None,
             )
@@ -267,15 +436,46 @@ class UpdateManager:
                     latest=latest,
                     newer=True,
                     url=page,
+                    notes=notes,
                     message=progress_message("staged"),
                     eta_seconds=None,
                 )
                 return
+        proceed = False
+        offer = False
+        with self._lock:
+            if download or self._confirmed:
+                if not self._download_started:
+                    self._download_started = True
+                    proceed = True
+            else:
+                offer = True
+        if offer:
+            self._set(
+                phase="available",
+                latest=latest,
+                newer=True,
+                url=page,
+                notes=notes,
+                message="",
+                eta_seconds=None,
+                received=0,
+                total=None,
+            )
+            with self._lock:
+                if self._confirmed and not self._download_started:
+                    self._download_started = True
+                    proceed = True
+        if proceed:
+            self._download_guard(latest, page, notes)
+
+    def _download_guard(self, latest: str, page: str, notes: str) -> None:
         self._set(
             phase="downloading",
             latest=latest,
             newer=True,
             url=page,
+            notes=notes,
             message=progress_message("downloading", None),
             eta_seconds=None,
             received=0,
@@ -285,29 +485,20 @@ class UpdateManager:
             self.download_and_stage(latest, page)
         except Exception as exc:
             logger.info("update download failed: %s", exc)
+            with self._lock:
+                self._download_started = False
             self._set(
                 phase="failed",
                 latest=latest,
                 newer=True,
                 url=page,
+                notes=notes,
                 message=progress_message("failed"),
                 eta_seconds=None,
             )
 
-    def fetch_latest(self) -> tuple[str, str]:
-        req = urllib.request.Request(
-            f"https://api.github.com/repos/{REPO}/releases/latest",
-            headers={
-                "User-Agent": "media-transcriber",
-                "Accept": "application/vnd.github+json",
-            },
-        )
-        with self._open(req, 15) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace"))
-        tag = str(data.get("tag_name") or "").strip().lstrip("v")
-        if not tag:
-            raise RuntimeError("missing tag")
-        return tag, config.UPDATE_URL
+    def fetch_latest(self) -> tuple[str, str, str]:
+        return fetch_release(self._open, 15)
 
     def download_and_stage(self, latest: str, page: str) -> None:
         pending = self.root / "pending-update"
@@ -366,6 +557,16 @@ class UpdateManager:
             raise RuntimeError("empty update download")
 
     def _stage_zip(self, zip_path: Path, latest: str, page: str) -> None:
+        notes = self._release[2] if self._release else ""
+        self._set(
+            phase="applying",
+            latest=latest,
+            newer=True,
+            url=page,
+            notes=notes,
+            message=progress_message("applying", None),
+            eta_seconds=None,
+        )
         pending = self.root / "pending-update"
         unpack = pending / "unpack"
         if unpack.exists():
@@ -387,18 +588,89 @@ class UpdateManager:
             latest=latest.strip().lstrip("v"),
             newer=True,
             url=page,
+            notes=notes,
             message=progress_message("staged"),
             eta_seconds=None,
         )
 
 
-def ensure_background(current: str) -> dict:
+def _manager_for(current: str, opener: Optional[_OPENER] = None) -> UpdateManager:
     global _manager
     with _manager_lock:
         if _manager is None:
-            _manager = UpdateManager(data_root(), current)
-        manager = _manager
-    return manager.ensure_started()
+            _manager = UpdateManager(data_root(), current, opener=opener)
+        return _manager
+
+
+def ensure_background(current: str) -> dict:
+    data = _manager_for(current).ensure_started()
+    data["prompt"] = False
+    return data
+
+
+def status_for_request(
+    current: str,
+    *,
+    local: bool,
+    opener: Optional[_OPENER] = None,
+    background: bool = True,
+) -> dict:
+    """Payload for GET /api/update.
+
+    Public and non-local requests stay idle. The Mac helper checks only.
+    The Windows helper starts the download.
+    """
+    if not local:
+        return idle_payload(current)
+    if prompt_update_enabled():
+        data = _manager_for(current, opener).ensure_checked(background=background)
+        data["prompt"] = True
+        return data
+    if auto_update_enabled():
+        data = _manager_for(current, opener).ensure_started(background=background)
+        data["prompt"] = False
+        return data
+    return _link_only_status(current, opener)
+
+
+def confirm_for_request(
+    current: str,
+    *,
+    local: bool,
+    opener: Optional[_OPENER] = None,
+    background: bool = True,
+) -> dict:
+    """Payload for POST /api/update. Only prompt mode starts a download here."""
+    if not local:
+        return idle_payload(current)
+    if prompt_update_enabled():
+        data = _manager_for(current, opener).start_download(background=background)
+        data["prompt"] = True
+        return data
+    if auto_update_enabled():
+        data = _manager_for(current, opener).ensure_started(background=background)
+        data["prompt"] = False
+        return data
+    return _link_only_status(current, opener)
+
+
+def _link_only_status(current: str, opener: Optional[_OPENER]) -> dict:
+    """Dev / browser on localhost: report a newer release, do not download it."""
+    payload = idle_payload(current)
+    try:
+        latest, page, notes = fetch_release(opener, 3)
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError, RuntimeError):
+        return payload
+    newer = version_newer(latest, current)
+    payload["latest"] = latest
+    if not newer:
+        return payload
+    payload.update({
+        "newer": True,
+        "url": page,
+        "notes": notes,
+    })
+    return payload
 
 
 def reset_for_tests() -> None:

@@ -346,6 +346,8 @@ function GitHub-Fetch([string]$Dest, [string]$Url) {
 $env:MT_HOST = "127.0.0.1"
 $env:MT_PORT = "$Port"
 $env:MT_TEMP_DIR = Join-Path $Data "temp"
+# 打开后自动同步到最新 Release。
+Remove-Item Env:MT_UPDATE_PROMPT -ErrorAction SilentlyContinue
 $env:MT_AUTO_UPDATE = "1"
 $env:MT_COOKIE_FILE = Join-Path $Data "cookies.txt"
 $env:MT_FFMPEG = Join-Path $Data "bin\ffmpeg.exe"

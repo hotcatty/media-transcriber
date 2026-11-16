@@ -13,8 +13,6 @@ import secrets
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -146,10 +144,6 @@ async def lifespan(_: FastAPI):
     jobs.stop()
 
 
-def _version_newer(latest: str, current: str) -> bool:
-    return app_update.version_newer(latest, current)
-
-
 app = FastAPI(
     title="媒体转录器",
     version=config.APP_VERSION,
@@ -237,38 +231,45 @@ async def ping():
     }
 
 
+def _update_local(request: Request) -> bool:
+    return not config.PUBLIC_WEB and _is_local_helper(request)
+
+
 @app.get("/api/update")
 async def update_check(request: Request):
-    """Release check. The installed helper downloads in the background after the UI is up."""
-    current = config.APP_VERSION
-    if config.PUBLIC_WEB or not _is_local_helper(request):
-        return app_update.idle_payload(current)
-    if app_update.auto_update_enabled():
-        return app_update.ensure_background(current)
-    latest = current
+    """Release check for the local helper.
+
+    Windows downloads after the window is up. Mac returns the release notes
+    and waits for POST /api/update. The public site stays idle.
+    """
+    return app_update.status_for_request(
+        config.APP_VERSION,
+        local=_update_local(request),
+    )
+
+
+@app.post("/api/update")
+async def update_confirm(request: Request):
+    """Mac helper: the user chose 「更新」. Windows keeps its own auto path."""
+    return app_update.confirm_for_request(
+        config.APP_VERSION,
+        local=_update_local(request),
+    )
+
+
+@app.post("/api/open-external")
+async def open_external(request: Request):
+    """Open a GitHub release page in the system browser, not in this window."""
+    if not _update_local(request):
+        raise HTTPException(404, "任务不存在")
     try:
-        req = urllib.request.Request(
-            "https://api.github.com/repos/hotcatty/media-transcriber/releases/latest",
-            headers={
-                "User-Agent": "media-transcriber",
-                "Accept": "application/vnd.github+json",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace"))
-        tag = str(data.get("tag_name") or "").lstrip("v")
-        if tag:
-            latest = tag
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
-        return app_update.idle_payload(current)
-    newer = _version_newer(latest, current)
-    payload = app_update.idle_payload(current)
-    payload.update({
-        "latest": latest,
-        "newer": newer,
-        "url": config.UPDATE_URL if newer else "",
-    })
-    return payload
+        body = await request.json()
+    except Exception:
+        body = {}
+    url = str(body.get("url") or "") if isinstance(body, dict) else ""
+    if not app_update.open_release_page(url):
+        raise HTTPException(400, "无法打开这个链接")
+    return {"ok": True}
 
 
 @app.get("/api/health")

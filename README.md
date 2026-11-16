@@ -44,7 +44,7 @@ Cursor 已经打开该仓库就先 git pull 再用；否则先 clone 再打开�
 
 ## 本地桌面版
 
-请于 [Releases](https://github.com/hotcatty/media-transcriber/releases/latest) 下载对应系统的压缩包。
+请于 [Releases](https://github.com/hotcatty/media-transcriber/releases/latest) 下载对应系统的压缩包。Mac 有新版本时在应用里弹出说明，点「更新」才下载。Windows 在打开后自动同步。
 
 ## 安全
 
