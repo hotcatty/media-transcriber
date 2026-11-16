@@ -278,6 +278,20 @@ def _netscape_line(domain: str, name: str, value: str) -> str:
     return f"{domain}\tTRUE\t/\tTRUE\t{_session_expiry()}\t{name}\t{value}\n"
 
 
+# Chrome's Application panel copies the Value cell, not `name=value`.
+# SESSDATA and sessionid are often base64 (`+`, `/`, `=`) or contain `|`.
+_COOKIE_TOKEN = re.compile(r"[A-Za-z0-9._\-%*+,/=|~]{8,}")
+_FIELD_LABELS = frozenset({
+    "name", "value", "domain", "path", "expires", "size",
+    "httponly", "secure", "samesite", "priority",
+})
+_ZERO_WIDTH = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+
+
+def _is_cookie_token(value: str) -> bool:
+    return bool(_COOKIE_TOKEN.fullmatch(value or ""))
+
+
 def _cookie_header_from_curl(text: str) -> str:
     raw = text or ""
     header = re.search(
@@ -291,9 +305,66 @@ def _cookie_header_from_curl(text: str) -> str:
     return ""
 
 
+def _unstick(value: str) -> str:
+    return _ZERO_WIDTH.sub("", (value or "").strip().strip('"').strip("'"))
+
+
+def _fill_pasted_lines(raw: str, wanted: set, primary: str, found: dict) -> None:
+    """DevTools copies: `NAME: value`, `NAME value`, or a Name / Value block."""
+    pending = ""
+    tokens: list[str] = []
+    labeled = False
+    for line in raw.splitlines():
+        line = _unstick(line)
+        if not line:
+            continue
+        colon = re.match(r"^([A-Za-z0-9_.-]+)\s*:\s*(\S+)$", line)
+        if colon and _is_cookie_token(colon.group(2)):
+            key = colon.group(1)
+            if key in wanted:
+                found[key] = colon.group(2)
+                pending = ""
+                continue
+            if key.lower() == "value":
+                found[pending or primary] = colon.group(2)
+                pending = ""
+                continue
+        parts = line.split()
+        if len(parts) == 2 and parts[0] in wanted and _is_cookie_token(parts[1]):
+            found[parts[0]] = parts[1]
+            pending = ""
+            continue
+        low = line.lower()
+        if low in _FIELD_LABELS:
+            labeled = True
+            if low == "value":
+                pending = pending or primary
+            continue
+        if line in wanted:
+            pending = line
+            labeled = True
+            continue
+        if _is_cookie_token(line):
+            if pending:
+                found[pending] = line
+                pending = ""
+            else:
+                tokens.append(line)
+    if found:
+        return
+    if len(tokens) == 1:
+        found[primary] = tokens[0]
+        return
+    if tokens and not labeled:
+        # A long Value wrapped by the paste box, with no other fields mixed in.
+        joined = "".join(tokens)
+        if _is_cookie_token(joined):
+            found[primary] = joined
+
+
 def _as_netscape(text: str, site: str) -> str:
     meta = site_info(site)
-    raw = (text or "").strip().strip('"').strip("'")
+    raw = _unstick(text or "")
     raw = _cookie_header_from_curl(raw) or raw
     if raw.lower().startswith("cookie:"):
         raw = raw.split(":", 1)[1].strip()
@@ -302,25 +373,24 @@ def _as_netscape(text: str, site: str) -> str:
     wanted.add(primary)
     found: dict[str, str] = {}
     for match in re.finditer(r"(?:^|[;\s])([A-Za-z0-9_.-]+)\s*=\s*([^\s;]+)", raw):
-        name, value = match.group(1), match.group(2).strip().strip('"').strip("'")
+        name, value = match.group(1), _unstick(match.group(2))
         if name in wanted and value:
             found[name] = value
     if not found:
-        skip = {"name", "value", "domain", "path", "expires", "size"}
+        skip = _FIELD_LABELS
         for line in raw.splitlines():
             cells = [c.strip() for c in re.split(r"[\t]+", line.strip()) if c.strip()]
             if len(cells) < 2:
                 cells = [c.strip() for c in re.split(r"[ ]{2,}", line.strip()) if c.strip()]
             if len(cells) < 2:
                 continue
-            name, value = cells[0], cells[1]
+            name, value = cells[0], _unstick(cells[1])
             if name.lower() in skip or value.lower() in skip:
                 continue
             if name in wanted and value:
                 found[name] = value
-    if not found and "\n" not in raw and "=" not in raw:
-        if re.fullmatch(r"[A-Za-z0-9_\-%*.,]{8,}", raw):
-            found[primary] = raw
+    if not found:
+        _fill_pasted_lines(raw, wanted, primary, found)
     if not found:
         return ""
     domain = "." + meta["host"].lstrip(".")
