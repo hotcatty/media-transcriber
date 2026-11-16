@@ -33,6 +33,7 @@ from text_utils import (
     YOUTUBE_DISABLED_HINT,
     YOUTUBE_UNREACHABLE_HINT,
     bili_block_hint,
+    bilibili_part_query,
     extract_share_url,
     is_charge_gated,
     is_douyin_url,
@@ -217,7 +218,9 @@ class VideoProcessor:
         self._prefer_guest_buvid = False
         self._bili_input_short = False
         # Last successful official-API resolution. Jobs run one at a time, so
-        # a single slot is enough. A later yt-dlp 412 must not throw it away.
+        # a single slot is enough. cid and audio_url belong to one part; a
+        # different `p` must not reuse them. A later yt-dlp 412 must not
+        # throw the slot away.
         self._bili_hit: dict = {}
         _use_certifi()
         if config.PUBLIC_WEB:
@@ -469,13 +472,7 @@ class VideoProcessor:
         return m.group(1) if m else None
 
     def _bilibili_page_query(self, url: str) -> str:
-        try:
-            page = (parse_qs(urlparse(url).query).get("p") or [""])[0]
-        except Exception:
-            return ""
-        if str(page).isdigit() and str(page) != "1":
-            return str(page)
-        return ""
+        return bilibili_part_query(url)
 
     def _url_host(self, url: str) -> str:
         try:
@@ -861,13 +858,20 @@ class VideoProcessor:
         hit = self._bili_hit if self._bili_hit.get("bvid") == bvid else {"bvid": bvid}
         if view:
             hit["view"] = view
+        new_cid = None
+        if cid is not None:
+            try:
+                new_cid = int(cid)
+            except (TypeError, ValueError):
+                new_cid = None
+        # Audio URLs are per cid. Switching parts must not keep the previous file.
+        if new_cid is not None and hit.get("cid") != new_cid:
+            hit.pop("audio_url", None)
+            hit["cid"] = new_cid
+        elif new_cid is not None:
+            hit["cid"] = new_cid
         if audio_url:
             hit["audio_url"] = audio_url
-        if cid:
-            try:
-                hit["cid"] = int(cid)
-            except (TypeError, ValueError):
-                pass
         self._bili_hit = hit
 
     def _recall_bili(self, bvid: str) -> dict:
@@ -1731,7 +1735,7 @@ class VideoProcessor:
             logger.info("B站音频地址稍后再取: %s", _clean(str(e))[:160])
             return
         if audio_url:
-            self._remember_bili(bvid, audio_url=audio_url)
+            self._remember_bili(bvid, cid=int(cid), audio_url=audio_url)
 
     async def _recover_bili_public(self, url: str):
         """One more official-API resolve after the webpage was blocked."""
@@ -1771,18 +1775,29 @@ class VideoProcessor:
             self._remember_bili(bvid, view=view)
             hit = self._recall_bili(bvid)
         title = prefetched_title or view.get("title") or "bilibili"
-        cid = hit.get("cid")
-        if not cid:
-            cid, _part, _page_duration = self._bilibili_target(view, url)
+        # The URL's p= selects the part. A cached cid from an earlier part of
+        # the same BV must not win, or P2 downloads P1's audio.
+        cid, _part, _page_duration = self._bilibili_target(view, url)
         if not cid:
             cid = view.get("cid")
         if not cid:
             raise Exception("暂时无法下载音频")
-        audio_url = (hit.get("audio_url") or "").strip()
+        try:
+            cid = int(cid)
+        except (TypeError, ValueError):
+            raise Exception("暂时无法下载音频")
+        audio_url = ""
+        cached_cid = hit.get("cid")
+        try:
+            same_part = cached_cid is not None and int(cached_cid) == cid
+        except (TypeError, ValueError):
+            same_part = False
+        if same_part:
+            audio_url = (hit.get("audio_url") or "").strip()
         if not audio_url:
-            audio_url = await asyncio.to_thread(self._bilibili_audio_url, bvid, int(cid))
+            audio_url = await asyncio.to_thread(self._bilibili_audio_url, bvid, cid)
             if audio_url:
-                self._remember_bili(bvid, audio_url=audio_url)
+                self._remember_bili(bvid, cid=cid, audio_url=audio_url)
         if not audio_url:
             raise Exception("暂时无法下载音频")
         dest = output_dir / f"audio_{unique_id}.m4a"
