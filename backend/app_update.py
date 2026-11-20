@@ -216,7 +216,8 @@ def fetch_release(opener: Optional[_OPENER], timeout: float) -> tuple[str, str, 
         },
     )
     open_fn = opener or urllib.request.urlopen
-    with open_fn(req, timeout) as resp:
+    # timeout is the third parameter of urlopen. The second is the request body.
+    with open_fn(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8", "replace"))
     if not isinstance(data, dict):
         raise RuntimeError("missing release")
@@ -398,7 +399,7 @@ class UpdateManager:
 
     def _open(self, req: urllib.request.Request, timeout: float):
         if self._opener is not None:
-            return self._opener(req, timeout)
+            return self._opener(req, timeout=timeout)
         return urllib.request.urlopen(req, timeout=timeout)
 
     def run(self, download: bool = True) -> None:
@@ -409,7 +410,7 @@ class UpdateManager:
         """
         try:
             latest, page, notes = self.fetch_latest()
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError, RuntimeError, TypeError) as exc:
             logger.info("update check skipped: %s", exc)
             self._set(phase="idle", newer=False, message="", notes="", eta_seconds=None)
             return
@@ -659,7 +660,7 @@ def _link_only_status(current: str, opener: Optional[_OPENER]) -> dict:
     payload = idle_payload(current)
     try:
         latest, page, notes = fetch_release(opener, 3)
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError, RuntimeError):
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError, RuntimeError, TypeError):
         return payload
     newer = version_newer(latest, current)
     payload["latest"] = latest

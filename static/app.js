@@ -181,16 +181,6 @@ function setUpdateBar(data) {
   }
 }
 
-function paintUpdateBanner(data) {
-  const banner = $("updateStatus");
-  if (!banner) return;
-  const phase = (data && data.phase) || "";
-  const message = (data && data.message) || "";
-  const show = !!message && phase !== "checking" && phase !== "idle" && phase !== "available";
-  banner.hidden = !show;
-  banner.textContent = show ? message : "";
-}
-
 function paintUpdateLink(data) {
   const link = $("updateLink");
   if (!link) return;
@@ -222,17 +212,10 @@ function paintUpdatePrompt(data) {
   const offer = phase === "available" || phase === "failed" || phase === "staged" || busy;
   if (!data || !data.prompt || (!data.newer && !busy && phase !== "staged")) {
     if (updateModalOpen()) closeOverlay("updateOverlay");
-    paintUpdateBanner(data);
     return;
   }
-  if (!offer || phase === "checking") {
-    paintUpdateBanner(data);
-    return;
-  }
-  if (updatePromptDismissed && !updateModalOpen()) {
-    paintUpdateBanner(data);
-    return;
-  }
+  if (!offer || phase === "checking") return;
+  if (updatePromptDismissed && !updateModalOpen()) return;
   const notesEl = $("updateNotes");
   const notes = data.notes || "";
   if (notes !== updateNotesShown) {
@@ -252,11 +235,6 @@ function paintUpdatePrompt(data) {
     confirm.hidden = busy || phase === "staged";
     confirm.disabled = false;
     confirm.textContent = "更新";
-  }
-  const banner = $("updateStatus");
-  if (banner) {
-    banner.hidden = true;
-    banner.textContent = "";
   }
   openOverlay("updateOverlay");
 }
@@ -292,10 +270,7 @@ function applyUpdatePayload(data) {
   updatePhase = body.phase || "";
   paintUpdateLink(body);
   if (body.prompt && isLocalHelper()) paintUpdatePrompt(body);
-  else {
-    if (updateModalOpen()) closeOverlay("updateOverlay");
-    paintUpdateBanner(body);
-  }
+  else if (updateModalOpen()) closeOverlay("updateOverlay");
   const busy = updatePhase === "checking" || updatePhase === "downloading" || updatePhase === "applying";
   if (busy) updatePoll = setTimeout(paintUpdateStatus, 800);
 }

@@ -426,6 +426,31 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(data["notes"], notes)
         self.assertFalse(any("/zip/" in url for url in calls))
 
+    def test_release_timeout_is_not_sent_as_the_body(self):
+        seen = {}
+
+        def opener(req, data=None, timeout=None):
+            seen["data"] = data
+            seen["timeout"] = timeout
+            if not isinstance(timeout, (int, float)):
+                raise TypeError("POST data should be bytes or a file object, not int")
+            raw = json.dumps({
+                "tag_name": "v1.3.4",
+                "body": "notes",
+                "html_url": "https://github.com/hotcatty/media-transcriber/releases/latest",
+            }).encode()
+            return _Body(raw)
+
+        os.environ.pop("MT_AUTO_UPDATE", None)
+        os.environ.pop("MT_UPDATE_PROMPT", None)
+        data = app_update.status_for_request(
+            "1.3.4", local=True, opener=opener, background=False,
+        )
+        self.assertIsNone(seen["data"])
+        self.assertEqual(seen["timeout"], 3)
+        self.assertEqual(data.get("message"), "")
+        self.assertNotIn("出了点问题", json.dumps(data, ensure_ascii=False))
+
     def test_unknown_size_has_no_percent(self):
         self.assertIsNone(app_update.progress_percent(0, None))
         self.assertEqual(app_update.progress_percent(50, 200), 25.0)
@@ -531,6 +556,9 @@ class LaunchOrderTests(unittest.TestCase):
         self.assertIn("confirm_for_request", main)
         self.assertIn("open_release_page", main)
         self.assertIn("not config.PUBLIC_WEB", main)
+        self.assertNotIn('id="updateStatus"', html)
+        self.assertNotIn("updateStatus", js)
+        self.assertNotIn("paintUpdateBanner", js)
 
 
 if __name__ == "__main__":
