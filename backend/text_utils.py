@@ -75,6 +75,50 @@ def apple_episode_id(url: str) -> str:
     return eid if eid.isdigit() else ""
 
 
+def apple_show_id(url: str) -> str:
+    """Podcast id from /id123 in the path. The episode id lives in ?i=."""
+    raw = extract_share_url(url)
+    if not raw:
+        return ""
+    try:
+        path = urlparse(raw).path or ""
+    except Exception:
+        return ""
+    match = re.search(r"/id(\d+)", path, re.I)
+    return match.group(1) if match else ""
+
+
+def apple_storefront(url: str) -> str:
+    """Two-letter Apple storefront in the path, such as de in /de/podcast/…."""
+    raw = extract_share_url(url)
+    if not raw:
+        return ""
+    try:
+        parts = [p for p in (urlparse(raw).path or "").split("/") if p]
+    except Exception:
+        return ""
+    if not parts:
+        return ""
+    code = parts[0].lower()
+    if re.fullmatch(r"[a-z]{2}", code):
+        return code
+    return ""
+
+
+def is_bilibili_bangumi_url(url: str) -> bool:
+    """Bilibili bangumi play links (/bangumi/play/ep… or /ss…), not ordinary BV videos."""
+    raw = extract_share_url(url) or (url or "").strip()
+    if not raw:
+        return False
+    if not re.match(r"^https?://", raw, re.I):
+        raw = "https://" + raw.lstrip("/")
+    try:
+        path = urlparse(raw).path or ""
+    except Exception:
+        return False
+    return re.search(r"/bangumi/play/(?:ep|ss)\d+", path, re.I) is not None
+
+
 def is_xiaohongshu_url(url: str) -> bool:
     u = (url or "").lower()
     return "xiaohongshu.com" in u or "xhslink.com" in u or "xhslink.cn" in u
@@ -292,6 +336,10 @@ BILI_SHORT_LINK_HINT = "请粘贴完整视频网址，不要用短链"
 BILI_RISK_HINT = "B站暂时拒绝访问，请稍后再试"
 NO_MEDIA_HINT = "这篇笔记没有可转录的视频"
 APPLE_EPISODE_HINT = "请打开某一集，再粘贴这一集的苹果播客链接"
+# A real episode link whose audio still could not be resolved. Not an invalid URL.
+APPLE_EXTRACT_HINT = "苹果播客暂时解析不到，请稍后再试"
+# Bangumi play links are usually premium. We do not pretend the audio is available.
+BANGUMI_PAID_HINT = "这是 B 站番剧，多半是付费内容，暂时拿不到音频"
 YOUTUBE_UNREACHABLE_HINT = "这台服务器连不上 YouTube，暂时没法解析这条链接"
 YOUTUBE_DISABLED_HINT = "线上体验版暂不支持 YouTube，请下载本地版（GitHub Release）"
 PUBLIC_HOST_HINT = "线上体验版只支持小宇宙、B 站、小红书、抖音、微信、苹果播客"
@@ -452,6 +500,8 @@ def is_charge_gated(text: str) -> bool:
 
 def parse_fail_hint(source: str, source_type: str, error: str, status: str = "") -> str:
     """Independent parse-fail copy: invalid link, needs login, or temporary."""
+    if is_bilibili_bangumi_url(source):
+        return BANGUMI_PAID_HINT
     blocked = bili_block_hint(error)
     if blocked:
         return blocked
@@ -476,6 +526,8 @@ def fail_hint_for_task(
     has_audio: bool = False,
 ) -> str:
     """Copy for the failed step: parse vs download stay independent."""
+    if is_bilibili_bangumi_url(source):
+        return BANGUMI_PAID_HINT
     st = stage or ""
     low = (error or "").lower()
     blocked = bili_block_hint(error)
@@ -549,6 +601,10 @@ def friendly_error(text: str) -> str:
         return YOUTUBE_UNREACHABLE_HINT
     if APPLE_EPISODE_HINT in raw:
         return APPLE_EPISODE_HINT
+    if APPLE_EXTRACT_HINT in raw or "unable to extract js asset path" in low or "unable to extract server data" in low:
+        return APPLE_EXTRACT_HINT
+    if BANGUMI_PAID_HINT in raw:
+        return BANGUMI_PAID_HINT
     if WECHAT_HINT in raw:
         return WECHAT_HINT
     blocked = bili_block_hint(raw)

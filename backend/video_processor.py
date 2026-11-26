@@ -21,6 +21,7 @@ import config
 import cookie_import
 from engines import Segment
 from text_utils import (
+    BANGUMI_PAID_HINT,
     BILI_RISK_HINT,
     BILI_SHORT_LINK_HINT,
     CAPTION_CONTEXT_MAX,
@@ -35,6 +36,7 @@ from text_utils import (
     bili_block_hint,
     bilibili_part_query,
     extract_share_url,
+    is_bilibili_bangumi_url,
     is_charge_gated,
     is_douyin_url,
     is_weixin_url,
@@ -514,12 +516,16 @@ class VideoProcessor:
         return bool(bili_block_hint(text))
 
     def _prepare_bilibili_url(self, raw: str) -> str:
+        if is_bilibili_bangumi_url(raw):
+            raise Exception(BANGUMI_PAID_HINT)
         self._bili_input_short = not self._is_full_bilibili_video_url(raw)
         current = raw
         if "b23.tv" in (current or "").lower():
             current = self._expand_b23(current)
         elif self._bili_input_short and not (self._bvid(current) or self._avid(current)):
             current = self._expand_other_short(current)
+        if is_bilibili_bangumi_url(current):
+            raise Exception(BANGUMI_PAID_HINT)
         canon = self._canonical_bilibili_video_url(current)
         if not canon and "b23.tv" not in (current or "").lower():
             canon = self._canonical_bilibili_video_url(raw)
