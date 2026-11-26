@@ -15,6 +15,7 @@ from urllib.error import HTTPError
 
 import video_processor
 from text_utils import (
+    BANGUMI_PAID_HINT,
     BILI_RISK_HINT,
     BILI_SHORT_LINK_HINT,
     CHARGE_NEED_LOGIN_HINT,
@@ -581,6 +582,48 @@ class Bilibili412Tests(unittest.TestCase):
         ))
         self.assertEqual(CHARGE_VIDEO_HINT, "当前账号无法观看本充电专属")
         self.assertEqual(CHARGE_NEED_LOGIN_HINT, "充电视频，请读取已充电账号")
+
+    def test_bangumi_play_links_explain_paid_audio(self):
+        """ep/ss bangumi is not a broken BV parse.
+
+        Public cases from the 2026-11-16..22 journal:
+        https://www.bilibili.com/bangumi/play/ep4602550
+        https://www.bilibili.com/bangumi/play/ss40159
+        """
+        vp = _processor()
+        samples = (
+            "https://www.bilibili.com/bangumi/play/ep4602550",
+            "https://www.bilibili.com/bangumi/play/ep6836020?spm_id_from=333.1",
+            "https://www.bilibili.com/bangumi/play/ss40159",
+        )
+        for url in samples:
+            with self.subTest(url=url):
+                with self.assertRaises(Exception) as caught:
+                    vp.prepare_url(url)
+                self.assertEqual(str(caught.exception), BANGUMI_PAID_HINT)
+                self.assertNotIn("链接无效", str(caught.exception))
+                self.assertNotEqual(str(caught.exception), TEMPORARY_PARSE_HINT)
+        self.assertEqual(
+            fail_hint_for_task(
+                samples[0], "url", TEMPORARY_PARSE_HINT, "failed", "parse",
+            ),
+            BANGUMI_PAID_HINT,
+        )
+        self.assertEqual(
+            fail_hint_for_task(
+                samples[2], "url", "暂时无法解析", "failed", "downloading",
+            ),
+            BANGUMI_PAID_HINT,
+        )
+        self.assertEqual(friendly_error(BANGUMI_PAID_HINT), BANGUMI_PAID_HINT)
+        self.assertEqual(vp.prepare_url(FULL), FULL)
+
+    def test_bangumi_after_short_link_uses_the_same_hint(self):
+        vp = _processor()
+        vp._expand_b23 = lambda url: "https://www.bilibili.com/bangumi/play/ep6836020"
+        with self.assertRaises(Exception) as caught:
+            vp.prepare_url("https://b23.tv/bangumiEp")
+        self.assertEqual(str(caught.exception), BANGUMI_PAID_HINT)
         app = (Path(__file__).resolve().parents[1] / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn("已读取 token 并重新解析", app)
         self.assertIn("当前账号无法观看本充电专属", app)

@@ -22,7 +22,14 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from text_utils import APPLE_EPISODE_HINT, apple_episode_id, clean_page_text
+from text_utils import (
+    APPLE_EPISODE_HINT,
+    APPLE_EXTRACT_HINT,
+    apple_episode_id,
+    apple_show_id,
+    apple_storefront,
+    clean_page_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -562,16 +569,107 @@ def _scrape_apple_episode_page(url: str) -> dict:
                 notes = text
 
     show = ""
+    title = ""
+    audio_url = ""
+    duration = None
     for btn in payload.get("headerButtonItems") or []:
         model = btn.get("model") if isinstance(btn, dict) else None
         if not isinstance(model, dict):
             continue
         show = show or (model.get("showTitle") or "")
+        title = title or (model.get("title") or "")
         summary = model.get("summary") or ""
         if isinstance(summary, str) and len(summary) > len(notes):
             notes = summary
+        if duration is None:
+            raw_duration = model.get("duration")
+            if isinstance(raw_duration, (int, float)) and raw_duration > 1:
+                duration = int(raw_duration)
+        if not audio_url:
+            audio_url = _apple_stream_url(model)
 
-    return {"people": people, "description": notes, "show": show}
+    return {
+        "people": people,
+        "description": notes,
+        "show": show,
+        "title": title,
+        "audio_url": audio_url,
+        "duration": duration,
+    }
+
+
+def _apple_stream_url(model: dict) -> str:
+    """Direct enclosure on the episode lockup. No bearer token, no JS bundle."""
+    play = model.get("playAction") if isinstance(model.get("playAction"), dict) else {}
+    offer = play.get("episodeOffer") if isinstance(play.get("episodeOffer"), dict) else {}
+    stream = (offer.get("streamUrl") or "").strip()
+    if stream:
+        return stream
+    enclosures = offer.get("mediaEnclosures") or model.get("mediaEnclosures") or []
+    if isinstance(enclosures, dict):
+        enclosures = [enclosures]
+    for enc in enclosures:
+        if isinstance(enc, dict):
+            stream = (enc.get("streamUrl") or "").strip()
+            if stream:
+                return stream
+    return ""
+
+
+def _itunes_apple_episode(url: str) -> dict:
+    """
+    Resolve one episode from the public iTunes lookup.
+
+    Looking up the episode id alone returns an empty result for current shows.
+    The show id in /id123 plus entity=podcastEpisode returns trackId == ?i=
+    and the enclosure URL. This does not read Apple's JS bundle.
+    """
+    import requests
+
+    episode_id = apple_episode_id(url)
+    if not episode_id:
+        return {}
+    show_id = apple_show_id(url)
+    lookup_ids = [show_id] if show_id else []
+    if episode_id not in lookup_ids:
+        lookup_ids.append(episode_id)
+    countries = []
+    for code in (apple_storefront(url), ""):
+        if code not in countries:
+            countries.append(code)
+
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    for lookup_id in lookup_ids:
+        for country in countries:
+            params = {
+                "id": lookup_id,
+                "media": "podcast",
+                "entity": "podcastEpisode",
+                "limit": "200",
+            }
+            if country:
+                params["country"] = country
+            try:
+                resp = requests.get(
+                    "https://itunes.apple.com/lookup",
+                    params=params,
+                    headers=headers,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+            except Exception as e:
+                logger.warning("苹果播客 iTunes 查询失败: %s", e)
+                continue
+            for item in payload.get("results") or []:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("trackId") or "") != episode_id:
+                    continue
+                audio = (item.get("episodeUrl") or "").strip()
+                if audio:
+                    return item
+    return {}
 
 
 def _merge_apple_description(ytdlp_desc: str, extra: dict) -> str:
@@ -586,34 +684,76 @@ def _merge_apple_description(ytdlp_desc: str, extra: dict) -> str:
     return description
 
 
+def _itunes_duration_seconds(item: dict) -> Optional[int]:
+    millis = item.get("trackTimeMillis")
+    try:
+        seconds = int(millis) / 1000
+    except (TypeError, ValueError):
+        return None
+    if seconds > 1:
+        return int(seconds)
+    return None
+
+
 async def _fetch_apple_podcasts(url: str, cookiefile: Optional[str] = None) -> PodcastInfo:
     if not apple_episode_id(url):
         raise ValueError(APPLE_EPISODE_HINT)
+
+    itunes: dict = {}
     try:
-        info = await _ytdlp_extract_info(url, cookiefile)
-        if info and info.get("url"):
-            extra = {}
-            try:
-                extra = await asyncio.to_thread(_scrape_apple_episode_page, url)
-            except Exception as e:
-                logger.warning(f"苹果播客页面信息读取失败: {e}")
-            return PodcastInfo(
-                audio_url=info["url"],
-                title=info.get("title") or "苹果播客",
-                podcast_name=(
-                    info.get("series")
-                    or info.get("uploader")
-                    or (extra.get("show") if extra else "")
-                    or ""
-                ),
-                duration=info.get("duration"),
-                cover_url=info.get("thumbnail"),
-                description=_merge_apple_description(info.get("description") or "", extra or {}),
-            )
+        itunes = await asyncio.to_thread(_itunes_apple_episode, url) or {}
     except Exception as e:
-        logger.error(f"yt-dlp 提取苹果播客失败: {e}")
-        raise ValueError(str(e) or APPLE_EPISODE_HINT) from e
-    raise ValueError("没法从这条苹果播客链接取出音频")
+        logger.warning(f"苹果播客 iTunes 查询失败: {e}")
+
+    extra: dict = {}
+    try:
+        extra = await asyncio.to_thread(_scrape_apple_episode_page, url) or {}
+    except Exception as e:
+        logger.warning(f"苹果播客页面信息读取失败: {e}")
+
+    audio_url = (itunes.get("episodeUrl") or extra.get("audio_url") or "").strip()
+    info = None
+    if not audio_url:
+        # yt-dlp's API fallback looks for /assets/index~[0-9a-f]+.js. Apple now
+        # ships a non-hex name (index~Bfya77aKeo.js), so that path raises
+        # "Unable to extract JS asset path" whenever the page has no stream.
+        try:
+            info = await _ytdlp_extract_info(url, cookiefile)
+        except Exception as e:
+            logger.error(f"yt-dlp 提取苹果播客失败: {e}")
+            info = None
+        audio_url = ((info or {}).get("url") or "").strip()
+    if not audio_url:
+        raise ValueError(APPLE_EXTRACT_HINT)
+
+    info = info or {}
+    millis_duration = _itunes_duration_seconds(itunes)
+    description = clean_page_text(itunes.get("description") or itunes.get("shortDescription") or "")
+    if not description:
+        description = info.get("description") or ""
+    return PodcastInfo(
+        audio_url=audio_url,
+        title=(
+            itunes.get("trackName")
+            or info.get("title")
+            or extra.get("title")
+            or "苹果播客"
+        ),
+        podcast_name=(
+            itunes.get("collectionName")
+            or info.get("series")
+            or info.get("uploader")
+            or extra.get("show")
+            or ""
+        ),
+        duration=millis_duration or info.get("duration") or extra.get("duration"),
+        cover_url=(
+            itunes.get("artworkUrl600")
+            or itunes.get("artworkUrl100")
+            or info.get("thumbnail")
+        ),
+        description=_merge_apple_description(description, extra or {}),
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
